@@ -19,6 +19,7 @@ build/
 # Dependencies
 node_modules/
 .pnpm-store/
+.playwright-mcp/
 
 # Logs
 *.log
@@ -39,4 +40,5 @@ Desktop.ini
 .qoder/
 
 # Package subdirectory
+package/
 package/.DS_Store
