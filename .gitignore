@@ -42,3 +42,6 @@ Desktop.ini
 # Package subdirectory
 package/
 package/.DS_Store
+
+# Git worktrees
+.worktrees/
