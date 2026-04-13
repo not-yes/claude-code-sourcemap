@@ -16,6 +16,7 @@ import { PlanApprovalDialog } from "./PlanApprovalDialog";
 import { ConversationHistorySheet } from "./ConversationHistorySheet";
 import { CheckpointSheet } from "./CheckpointSheet";
 import {
+  loadMessages,
   loadMessagesPaginated,
   getTotalMessageCount,
   saveMessages,
@@ -70,7 +71,6 @@ const SUGGESTED_PROMPTS = [
   { icon: Sparkles, label: "你好，请介绍一下你自己", prompt: "你好，请介绍一下你自己" },
   { icon: FileText, label: "总结当前工作区文档", prompt: "总结当前工作区中的文档，列出要点" },
   { icon: BarChart3, label: "生成每日简报", prompt: "生成本日的任务简报，包括待办和已完成事项" },
-  { icon: Code, label: "分析代码结构", prompt: "分析当前项目的代码结构，给出架构建议" },
   { icon: Lightbulb, label: "提供创意建议", prompt: "针对 [主题] 提供 5 个创意建议" },
 ] as const;
 
@@ -92,19 +92,45 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const setAgentStartLoading = useAppStore((s) => s.setAgentStartLoading);
   const refreshRunningAgents = useAgentsStore((s) => s.refreshRunningAgents);
   const agentWorkingDirectory = useAppStore((s) => s.agentWorkingDirectory);
+  const workingDirectories = useAppStore((s) => s.workingDirectories);
+  const setAgentWorkingDirectory = useAppStore((s) => s.setAgentWorkingDirectory);
   
-  // 当前 Agent 的工作目录
-  const currentCwd = agentWorkingDirectory[agentId] || "";
+  // 当前 Agent 的工作目录（确保有默认值，避免空字符串导致存储 key 不一致）
+  const currentCwd = agentWorkingDirectory[agentId] || workingDirectories[0] || "";
+  
+  // 初始化：确保工作目录已设置（避免空 cwd 导致存储 key 不一致）
+  useEffect(() => {
+    if (!agentWorkingDirectory[agentId] && workingDirectories[0]) {
+      setAgentWorkingDirectory(agentId, workingDirectories[0]);
+    }
+  }, [agentId, agentWorkingDirectory, workingDirectories, setAgentWorkingDirectory]);
   
   // 每个 Agent 独立的 backendSessionId（按工作目录隔离）
-  const [activeBackendSessionId, setActiveBackendSessionId] = useState<string | null>(() => 
-    loadPersistedBackendSession(agentId, currentCwd)
-  );
+  const [activeBackendSessionId, setActiveBackendSessionId] = useState<string | null>(() => {
+    if (!currentCwd) return null; // cwd 未就绪，不加载
+    return loadPersistedBackendSession(agentId, currentCwd);
+  });
   
   // 工作目录变化时，重新加载对应的会话
   useEffect(() => {
+    if (!currentCwd) return; // cwd 未就绪，跳过
     const newSessionId = loadPersistedBackendSession(agentId, currentCwd);
     setActiveBackendSessionId(newSessionId);
+  }, [agentId, currentCwd]);
+  
+  // 从旧的 key（无 cwd 后缀）迁移消息到新 key（有 cwd 后缀）
+  // 处理 workingDirectories 异步加载导致的存储 key 不一致问题
+  useEffect(() => {
+    if (!currentCwd) return;
+    const oldMessages = loadMessages(agentId);
+    if (oldMessages.length > 0) {
+      const newMessages = loadMessages(agentId, currentCwd);
+      if (newMessages.length === 0) {
+        // 新 key 没有消息，迁移旧消息并删除旧 key
+        saveMessages(agentId, oldMessages, currentCwd);
+        saveMessages(agentId, []);
+      }
+    }
   }, [agentId, currentCwd]);
 
   // 权限状态
@@ -303,11 +329,13 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     // Agent 启动逻辑在 WorkingDirectorySelector 中处理
   }, [agentId, sidecarConnected, setCheckpointSheetOpen]);
 
-  // Ref 保存最新消息，用于卸载时保存
+  // Ref 保存最新状态和消息，用于卸载时保存（避免闭包陷阱）
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const activeBackendSessionIdRef = useRef(activeBackendSessionId);
   activeBackendSessionIdRef.current = activeBackendSessionId;
+  const currentCwdRef = useRef(currentCwd);
+  currentCwdRef.current = currentCwd;
   
   // 保存消息到本地
   useEffect(() => {
@@ -320,13 +348,13 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     return () => {
       if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
     };
-  }, [agentId, messages, activeBackendSessionId]);
+  }, [agentId, messages, activeBackendSessionId, currentCwd]);
   
   // 组件卸载时立即保存消息（使用 ref 避免闭包陷阱）
   useEffect(() => {
     return () => {
       if (!activeBackendSessionIdRef.current && messagesRef.current.length > 0) {
-        saveMessages(agentId, messagesRef.current, currentCwd);
+        saveMessages(agentId, messagesRef.current, currentCwdRef.current);
       }
     };
   }, [agentId]);
@@ -408,9 +436,20 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     });
     setLoading(true);
 
+    // 获取最新 cwd（防止闭包中 currentCwd 为空字符串）
+    const latestCwd = currentCwd || useAppStore.getState().agentWorkingDirectory[agentId] || useAppStore.getState().workingDirectories[0] || "";
+    if (!latestCwd) {
+      toast.error("请先选择工作目录");
+      inFlightRef.current = false;
+      setLoading(false);
+      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantMsg.id));
+      return;
+    }
+
     const sessionOpts = {
       ...(activeBackendSessionId ? { backendSessionId: activeBackendSessionId } : {}),
       agentId: agentId,
+      cwd: latestCwd,
     };
 
     try {
@@ -427,6 +466,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
               switch (event.type) {
                 case 'text': {
                   const textEvent = event as { type: 'text'; content: string; isThinking?: boolean };
+                  console.log(`[ChatArea] text event: isThinking=${textEvent.isThinking}, content_len=${textEvent.content?.length || 0}`);
                   if (!responseTruncatedRef.current) {
                     responseSizeRef.current += textEvent.content.length;
                     if (responseSizeRef.current > MAX_RESPONSE_SIZE) {
@@ -450,6 +490,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                     if (lastBlock && lastBlock.type === 'text') {
                       blocks[blocks.length - 1] = { ...lastBlock, content: lastBlock.content + textEvent.content };
                     } else {
+                      console.log(`[ChatArea] Adding new text block: ${textEvent.content.substring(0, 50)}...`);
                       blocks.push({ type: 'text', content: textEvent.content });
                     }
                   }
@@ -478,10 +519,25 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 }
                 case 'complete': {
                   const completeEvent = event as { type: 'complete'; usage?: TokenUsage; reason?: string; sessionId?: string };
+                  console.log(`[ChatArea] complete event: reason=${completeEvent.reason}, hasUsage=${!!completeEvent.usage}`);
                   completionUsage = completeEvent.usage;
-                  if (completeEvent.sessionId && !activeBackendSessionId) {
-                    savePersistedBackendSession(agentId, completeEvent.sessionId, currentCwd);
-                    setActiveBackendSessionId(completeEvent.sessionId);
+                  if (completeEvent.sessionId) {
+                    // 始终保存 Sidecar 返回的 sessionId（确保与后端同步）
+                    const cwdForSave = currentCwd || useAppStore.getState().agentWorkingDirectory[agentId] || useAppStore.getState().workingDirectories[0] || "";
+                    if (cwdForSave) {
+                      savePersistedBackendSession(agentId, completeEvent.sessionId, cwdForSave);
+                    }
+                    if (!activeBackendSessionId) {
+                      setActiveBackendSessionId(completeEvent.sessionId);
+                    }
+                  }
+                  // 检查是否有 text 内容，如果没有，添加提示
+                  const hasTextBlock = blocks.some(b => b.type === 'text');
+                  const hasThinkingBlock = blocks.some(b => b.type === 'thinking');
+                  console.log(`[ChatArea] complete check: hasTextBlock=${hasTextBlock}, hasThinkingBlock=${hasThinkingBlock}, totalBlocks=${blocks.length}`);
+                  if (!hasTextBlock) {
+                    console.warn('[ChatArea] 执行完成但没有文本回复，reason:', completeEvent.reason);
+                    blocks.push({ type: 'system', level: 'info', content: `任务执行完成（${completeEvent.reason || '无回复'}）` });
                   }
                   break;
                 }
@@ -528,14 +584,45 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       });
     } catch (e) {
       if (e instanceof Error && e.message === "STREAM_LIMIT_EXCEEDED") {
-        toast.error("当前并发请求过多，请稍后重试");
+        toast.error("当前并发请求过多，请稍后再试");
         setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantMsg.id));
       }
       inFlightRef.current = false;
       setLoading(false);
       abortControllerRef.current = null;
       if ((e as Error)?.name === "AbortError") return;
+      
       const errMsg = e instanceof Error ? e.message || e.name || "未知错误" : String(e ?? "执行失败");
+      
+      // 检测到 Agent 已停止，尝试自动重启
+      if (errMsg.includes("SIDECAR_NOT_RUNNING") || errMsg.includes("channel 已关闭") || errMsg.includes("channel closed")) {
+        console.warn(`[ChatArea] Agent ${agentId} 未运行，尝试自动重启...`);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantMsg.id ? { ...m, content: "Agent 连接断开，正在重新启动..." } : m))
+        );
+        
+        // 异步重启 agent
+        (async () => {
+          setAgentStartLoading(agentId, true);
+          try {
+            await ensureAgent(agentId, currentCwd);
+            toast.success("Agent 已重启，请重新发送消息");
+            // 移除临时提示消息
+            setMessages((prev) => prev.filter((m) => m.id !== assistantMsg.id && m.id !== userMsg.id));
+          } catch (restartErr) {
+            const restartMsg = restartErr instanceof Error ? restartErr.message : String(restartErr);
+            console.error(`[ChatArea] Agent ${agentId} 重启失败:`, restartErr);
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantMsg.id ? { ...m, content: `❌ Agent 重启失败: ${restartMsg}` } : m))
+            );
+            toast.error(`Agent 重启失败: ${restartMsg}`);
+          } finally {
+            setAgentStartLoading(agentId, false);
+          }
+        })();
+        return;
+      }
+      
       useLogStore.getState().addError(`execute: ${errMsg}`);
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantMsg.id ? { ...m, content: `❌ ${errMsg}` } : m))

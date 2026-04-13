@@ -272,6 +272,8 @@ export type ExecuteStreamSessionOptions = {
   backendSessionId?: string;
   /** Agent 配置标识（用于加载 soul 和 skills），独立于 backendSessionId */
   agentId?: string;
+  /** 工作目录（Agent 启动时使用） */
+  cwd?: string;
 };
 
 /**
@@ -354,6 +356,7 @@ export async function executeStream(
       ...(sessionId ? { sessionId } : {}),
       ...(agentId ? { agentId } : {}),
       ...(agentSystemPrompt ? { systemPrompt: agentSystemPrompt } : {}),
+      ...(sessionOpts.cwd ? { cwd: sessionOpts.cwd } : {}),
       streamId,  // 将前端生成的 streamId 传给 Rust
     };
     console.log(`[executeStream] 发起 agent_execute: agentId=${agentId ?? 'main'}, sessionId=${sessionId}, 有systemPrompt=${!!agentSystemPrompt}, streamId=${streamId}, options=`, JSON.stringify(execOptions));

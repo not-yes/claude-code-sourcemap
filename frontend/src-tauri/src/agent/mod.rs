@@ -46,12 +46,12 @@ pub struct AgentManager {
     start_lock: Mutex<()>,
 }
 
-/// 返回最大并发 Agent 数量（默认 3，可通过环境变量 MAX_CONCURRENT_AGENTS 覆盖）
+/// 返回最大并发 Agent 数量（默认 5，可通过环境变量 MAX_CONCURRENT_AGENTS 覆盖）
 fn max_concurrent_agents() -> usize {
     std::env::var("MAX_CONCURRENT_AGENTS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(3)
+        .unwrap_or(5)
 }
 
 impl AgentManager {
@@ -532,7 +532,21 @@ impl AgentManager {
         options: Option<serde_json::Value>,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<serde_json::Value>> {
         let ipc = self.get_agent_ipc(agent_id).await?;
-        ipc.execute(content, options).await
+        match ipc.execute(content, options).await {
+            Ok(rx) => Ok(rx),
+            Err(e) => {
+                let err_msg = e.to_string();
+                // 如果 channel 已关闭，说明 agent 进程已退出但未被清理
+                // 停止 agent 让下次调用重新启动
+                if err_msg.contains("channel 已关闭") || err_msg.contains("channel closed") {
+                    log::warn!("AgentManager: agent={} channel 已关闭，执行停止清理", agent_id);
+                    let _ = self.stop_agent(agent_id).await;
+                    Err(anyhow::anyhow!("SIDECAR_NOT_RUNNING: agent={} 已停止（channel 关闭）", agent_id))
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// 回传权限请求的用户决策到指定 agent 的 sidecar

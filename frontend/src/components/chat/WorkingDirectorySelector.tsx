@@ -57,23 +57,6 @@ export function WorkingDirectorySelector({ agentId }: WorkingDirectorySelectorPr
     setInitialized(true);
   }, [agentId, workingDirectories, agentWorkingDirectory, setAgentWorkingDirectory, initialized]);
 
-  // 确保 Agent 实例已启动
-  useEffect(() => {
-    if (!currentDir || restarting) return;
-    
-    const initAgent = async () => {
-      setAgentStartLoading(agentId, true);
-      try {
-        await ensureAgent(agentId, currentDir);
-      } catch (error) {
-        console.error(`[WorkingDirectorySelector] Agent ${agentId} 启动失败:`, error);
-      } finally {
-        setAgentStartLoading(agentId, false);
-      }
-    };
-    initAgent();
-  }, [agentId, currentDir, restarting, setAgentStartLoading]);
-
   const handleSelectDir = useCallback(
     async (dir: string) => {
       if (dir === currentDir || restarting) return;
