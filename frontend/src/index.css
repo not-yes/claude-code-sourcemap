@@ -1,0 +1,232 @@
+/* P0: Custom fonts */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  /* Entrance animations */
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes slide-in-left {
+    from {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% {
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4);
+    }
+    50% {
+      box-shadow: 0 0 0 4px hsl(var(--primary) / 0);
+    }
+  }
+
+  @keyframes cursor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .animate-cursor::after {
+    content: '▋';
+    animation: cursor-blink 1s step-end infinite;
+    margin-left: 2px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.3s ease-out forwards;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scale-in 0.2s ease-out forwards;
+  }
+
+  .animate-slide-in-left {
+    animation: slide-in-left 0.25s ease-out forwards;
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  /* Staggered children animation */
+  .stagger-children > * {
+    opacity: 0;
+    animation: fade-in-up 0.3s ease-out forwards;
+  }
+
+  .stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-children > *:nth-child(2) { animation-delay: 50ms; }
+  .stagger-children > *:nth-child(3) { animation-delay: 100ms; }
+  .stagger-children > *:nth-child(4) { animation-delay: 150ms; }
+  .stagger-children > *:nth-child(5) { animation-delay: 200ms; }
+  .stagger-children > *:nth-child(6) { animation-delay: 250ms; }
+
+  /* Smooth scrolling */
+  .scroll-smooth {
+    scroll-behavior: smooth;
+  }
+
+  /* Custom scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+
+  /* Hover scale */
+  .hover-lift {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px hsl(var(--primary) / 0.1);
+  }
+}
+
+@layer base {
+  /* Qoder IDE Light Theme - based on Qoder_light_default.json */
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 215 26% 22%;
+    --card: 220 29% 97%;
+    --card-foreground: 215 26% 22%;
+    --popover: 0 0% 100%;
+
+  /* Hide native number input spinners */
+  .no-spinner::-webkit-inner-spin-button,
+  .no-spinner::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .no-spinner[type=number] {
+    -moz-appearance: textfield;
+  }
+    --popover-foreground: 215 26% 22%;
+    --primary: 142 66% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 29% 97%;
+    --secondary-foreground: 215 26% 22%;
+    --muted: 220 29% 97%;
+    --muted-foreground: 215 15% 48%;
+    --accent: 206 100% 68%;
+    --accent-foreground: 215 26% 22%;
+    --destructive: 0 93% 63%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 18% 92%;
+    --input: 221 15% 83%;
+    --ring: 142 66% 45%;
+  }
+
+  /* Qoder IDE Dark Theme - based on Qoder_dark_default.json */
+  .dark {
+    --background: 210 4% 10%;
+    --foreground: 220 14% 91%;
+    --card: 210 5% 14%;
+    --card-foreground: 220 14% 91%;
+    --popover: 210 5% 14%;
+    --popover-foreground: 220 14% 91%;
+    --primary: 142 66% 45%;
+    --primary-foreground: 240 5% 7%;
+    --secondary: 210 5% 18%;
+    --secondary-foreground: 220 14% 91%;
+    --muted: 210 5% 18%;
+    --muted-foreground: 220 12% 78%;
+    --accent: 206 100% 68%;
+    --accent-foreground: 240 5% 7%;
+    --destructive: 0 93% 63%;
+    --destructive-foreground: 220 14% 91%;
+    --border: 210 13% 27%;
+    --input: 210 13% 27%;
+    --ring: 142 66% 45%;
+  }
+
+  /* Font family - Outfit Medium */
+  html, body {
+    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    font-weight: 500;
+  }
+
+  body {
+    font-weight: 400;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+    font-weight: 500;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+    background: transparent !important;
+  }
+  body {
+    overflow: hidden;
+  }
+}
+
