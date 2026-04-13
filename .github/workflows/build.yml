@@ -87,6 +87,20 @@ jobs:
         working-directory: claude-code
         run: bun scripts/build-sidecar.ts --target ${{ matrix.target }}
 
+      - name: Verify sidecar binary exists (Windows)
+        if: runner.os == 'Windows'
+        working-directory: frontend/src-tauri
+        run: |
+          if (Test-Path "binaries/claude-sidecar-x86_64-pc-windows-msvc.exe") {
+            Write-Host "✓ Sidecar binary found"
+            Get-Item "binaries/claude-sidecar-x86_64-pc-windows-msvc.exe" | Select-Object Name, Length
+          } else {
+            Write-Host "✗ Sidecar binary NOT found!"
+            Write-Host "Contents of binaries directory:"
+            Get-ChildItem binaries -ErrorAction SilentlyContinue
+            exit 1
+          }
+
       - name: Build Tauri app (macOS)
         if: runner.os == 'macOS'
         working-directory: frontend
