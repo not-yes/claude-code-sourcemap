@@ -80,8 +80,8 @@ jobs:
           git config user.name "CI"
           # Install dependencies, skip @vscode/ripgrep postinstall
           bun install --ignore-scripts
-          # Clean up git repo
-          rm -rf .git
+          # Clean up git repo (cross-platform)
+          node -e "require('fs').rmSync('.git', {recursive: true, force: true})"
 
       - name: Build sidecar
         working-directory: claude-code
