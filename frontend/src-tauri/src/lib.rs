@@ -25,6 +25,12 @@ fn classify_error(e: anyhow::Error) -> String {
     }
 }
 
+/// 判断 RPC 方法是否属于需要更新活跃时间的“活跃操作”
+/// 区分“执行操作”（touch_agent）和“查询操作”（不 touch）
+fn is_active_method(method: &str) -> bool {
+    matches!(method, "execute" | "executeStream" | "abort" | "interrupt" | "createSession" | "sendMessage")
+}
+
 /// 从 options 中提取 agent_id，默认 "main"
 fn extract_agent_id(options: &Option<serde_json::Value>) -> String {
     options
@@ -94,8 +100,11 @@ async fn agent_send_request(
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let aid = agent_id.as_deref().unwrap_or("main");
-    // 更新活跃时间，防止正在被用户访问（查看历史等）的 agent 被误判为空闲而回收
-    state.0.touch_agent(aid).await;
+    // 仅活跃操作（execute/sendMessage 等）才更新活跃时间
+    // 查询操作（getHistory/getSession 等）不更新，避免纯查看行为阻止空闲回收
+    if is_active_method(&method) {
+        state.0.touch_agent(aid).await;
+    }
     state
         .0
         .send_request_for_agent(aid, &method, params)

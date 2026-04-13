@@ -1,10 +1,9 @@
-import { getActiveStreamCount } from '../api/tauri-api';
 
 export interface MemoryMetrics {
   heapUsedMB: number | null;       // JS heap used (MB)
   heapTotalMB: number | null;      // JS heap total (MB)
   localStorageUsedKB: number;      // localStorage usage estimate (KB)
-  activeStreams: number;            // current active stream count
+  activeStreams: number;            // current active stream count (always 0, limit removed)
 }
 
 export function getMemoryMetrics(): MemoryMetrics {
@@ -37,7 +36,7 @@ export function getMemoryMetrics(): MemoryMetrics {
     heapUsedMB,
     heapTotalMB,
     localStorageUsedKB,
-    activeStreams: getActiveStreamCount(),
+    activeStreams: 0,  // concurrent stream limit removed, backend controls concurrency
   };
 }
 

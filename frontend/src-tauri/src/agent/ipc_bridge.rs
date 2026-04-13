@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -46,6 +47,14 @@ fn safe_truncate(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// 活跃流式响应条目：保存 mpsc sender 和流创建时间戳，用于 stale 清理
+struct StreamEntry {
+    /// 向消费者推送流式事件的 channel sender
+    tx: mpsc::Sender<serde_json::Value>,
+    /// 流创建时间，用于检测残留 stream
+    created_at: Instant,
+}
+
 /// JSON-RPC 协议处理与消息路由桥接器
 /// 管理 pending 请求和活跃流式响应
 pub struct IpcBridge {
@@ -53,9 +62,9 @@ pub struct IpcBridge {
     next_id: AtomicU64,
     /// pending 普通请求：id -> oneshot sender，用于返回单次响应
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
-    /// 活跃流式响应：executeId (string) -> mpsc sender，用于推送流式事件
+    /// 活跃流式响应：executeId (string) -> StreamEntry（含 sender 和创建时间戳）
     /// 使用 String key，与 sidecar 协议中 executeId 为 string 保持一致
-    active_streams: Arc<Mutex<HashMap<String, mpsc::Sender<serde_json::Value>>>>,
+    active_streams: Arc<Mutex<HashMap<String, StreamEntry>>>,
     /// pending 权限请求：requestId -> (rpc_id, response sender)
     pending_permissions: Arc<Mutex<HashMap<String, (serde_json::Value, oneshot::Sender<serde_json::Value>)>>>,
     /// 向子进程 stdin 发送消息的 channel sender
@@ -90,8 +99,8 @@ impl IpcBridge {
     ) -> Self {
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        // active_streams 改为 String key，与协议中 executeId 为 string 对齐
-        let active_streams: Arc<Mutex<HashMap<String, mpsc::Sender<serde_json::Value>>>> =
+        // active_streams 改为 String key -> StreamEntry（含时间戳），与协议中 executeId 为 string 对齐
+        let active_streams: Arc<Mutex<HashMap<String, StreamEntry>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let pending_permissions: Arc<Mutex<HashMap<String, (serde_json::Value, oneshot::Sender<serde_json::Value>)>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -262,10 +271,13 @@ impl IpcBridge {
         // 创建流式事件 channel（缓冲 128 个事件）
         let (stream_tx, stream_rx) = mpsc::channel::<serde_json::Value>(128);
 
-        // 注册活跃流（key 为 string）
+        // 注册活跃流（key 为 string），记录创建时间戳用于 stale 清理
         {
             let mut streams = self.active_streams.lock().await;
-            streams.insert(execute_id_str.clone(), stream_tx);
+            streams.insert(execute_id_str.clone(), StreamEntry {
+                tx: stream_tx,
+                created_at: Instant::now(),
+            });
         }
 
         // 修复：options 嵌套到 "options" 字段，executeId 为 string
@@ -331,11 +343,33 @@ impl IpcBridge {
         Ok(())
     }
 
+    /// 清理超过 30 分钟的残留 stream entry（保底清理，防止 active_streams 泄漏）
+    pub async fn cleanup_stale_streams(&self) {
+        let mut streams = self.active_streams.lock().await;
+        let stale_threshold = std::time::Duration::from_secs(30 * 60);
+        let before = streams.len();
+        streams.retain(|id, entry| {
+            let elapsed = entry.created_at.elapsed();
+            let is_stale = elapsed > stale_threshold;
+            if is_stale {
+                log::warn!(
+                    "[IpcBridge] 清理残留 stream: executeId={}, age={:?}",
+                    id, elapsed
+                );
+            }
+            !is_stale
+        });
+        let removed = before - streams.len();
+        if removed > 0 {
+            log::info!("[IpcBridge] 清理了 {} 个残留 stream", removed);
+        }
+    }
+
     /// 内部：根据消息类型分发到对应 pending 或 stream handler
     async fn dispatch_message(
         msg: serde_json::Value,
         pending: &Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
-        active_streams: &Arc<Mutex<HashMap<String, mpsc::Sender<serde_json::Value>>>>,
+        active_streams: &Arc<Mutex<HashMap<String, StreamEntry>>>,
         pending_permissions: &Arc<Mutex<HashMap<String, (serde_json::Value, oneshot::Sender<serde_json::Value>)>>>,
         ready_tx: &Arc<Mutex<Option<oneshot::Sender<()>>>>,
         app_handle: &tauri::AppHandle,
@@ -390,7 +424,7 @@ impl IpcBridge {
                     let mut streams = active_streams.lock().await;
                     let registered_keys: Vec<String> = streams.keys().cloned().collect();
                     log::info!("IpcBridge[{}]: $/stream 事件 executeId={}, 已注册的keys={:?}", agent_id, eid, registered_keys);
-                    if let Some(tx) = streams.get(&eid) {
+                    if let Some(entry) = streams.get(&eid) {
                         // 修复：只推送 params.event（SidecarStreamEvent 本体），而非整个 params
                         let event = msg
                             .get("params")
@@ -407,7 +441,7 @@ impl IpcBridge {
                         };
                         log::info!("IpcBridge: 收到流式事件 executeId={} type={} content={}", eid, event_type, content_preview);
                         // 使用 try_send 非阻塞发送，避免缓冲区满时阻塞 reader task
-                        match tx.try_send(event) {
+                        match entry.tx.try_send(event) {
                             Ok(_) => { /* 正常发送 */ }
                             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                                 log::warn!("[IpcBridge] 流式事件缓冲区已满，丢弃事件 executeId={}", eid);
@@ -501,7 +535,7 @@ impl IpcBridge {
 
                 if let Some(eid) = execute_id {
                     let mut streams = active_streams.lock().await;
-                    if let Some(tx) = streams.remove(&eid) {
+                    if let Some(entry) = streams.remove(&eid) {
                         let msg_params = msg.get("params").cloned().unwrap_or(serde_json::Value::Null);
                         let message = msg_params
                             .get("message")
@@ -522,7 +556,7 @@ impl IpcBridge {
                         if let Some(c) = code {
                             error_event["code"] = serde_json::Value::String(c);
                         }
-                        let _ = tx.send(error_event).await;
+                        let _ = entry.tx.send(error_event).await;
                     }
                 }
             }

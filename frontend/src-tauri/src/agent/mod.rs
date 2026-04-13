@@ -87,6 +87,8 @@ impl AgentManager {
                             let t = instance.last_activity.read().await;
                             *t
                         };
+                        // 先清理残留 stale stream，防止 active_streams 泄漏导致始终返回 true
+                        instance.ipc.cleanup_stale_streams().await;
                         // 有活跃执行时跳过超时检查，防止长时间工具执行期间 Agent 被误判回收
                         if instance.ipc.has_active_streams().await {
                             log::debug!("AgentManager: agent={} 有活跃执行，跳过超时检查", agent_id);
@@ -192,27 +194,44 @@ impl AgentManager {
     }
 
     /// 回收最久未使用的 agent（排除 main）
+    /// 优先回收无活跃流的 agent；若所有 agent 都有活跃流则强制回收最久未用的
     async fn evict_idle_agent(&self) -> anyhow::Result<()> {
-        let oldest_id = {
+        // 收集候选：分两组（无活跃流 / 全部）
+        let (no_stream_candidates, all_candidates) = {
             let agents = self.agents.read().await;
-            let mut oldest: Option<(String, Instant)> = None;
+            let mut no_stream: Vec<(String, Instant)> = Vec::new();
+            let mut all: Vec<(String, Instant)> = Vec::new();
             for (id, inst) in agents.iter() {
                 if id == "main" { continue; }
                 let t = { *inst.last_activity.read().await };
-                if oldest.is_none() || t < oldest.as_ref().unwrap().1 {
-                    oldest = Some((id.clone(), t));
+                let has_streams = inst.ipc.has_active_streams().await;
+                log::debug!(
+                    "evict 候选: agent={}, last_activity={:.1}s ago, active_streams={}",
+                    id, t.elapsed().as_secs_f32(), has_streams
+                );
+                all.push((id.clone(), t));
+                if !has_streams {
+                    no_stream.push((id.clone(), t));
                 }
             }
-            oldest.map(|(id, _)| id)
+            (no_stream, all)
+        }; // read lock 释放
+
+        // 优先：无活跃流的最久未用
+        let target = if let Some((id, _)) = no_stream_candidates.iter().min_by_key(|(_, t)| *t) {
+            log::info!("AgentManager: 回收空闲 agent={} （无活跃流）", id);
+            id.clone()
+        } else if let Some((id, _)) = all_candidates.iter().min_by_key(|(_, t)| *t) {
+            // Fallback：所有 agent 都有活跃流，强制回收最久未用的，防止死锁
+            log::warn!("AgentManager: 强制回收 agent={} （所有 agent 都有活跃流）", id);
+            id.clone()
+        } else {
+            return Err(anyhow::anyhow!("evict_idle_agent: 没有可回收的非 main agent"));
         };
 
-        if let Some(id) = oldest_id {
-            log::info!("AgentManager: 达到并发上限，回收最久未用 Agent {}", id);
-            self.stop_agent(&id).await?;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("evict_idle_agent: 没有可回收的非 main agent"))
-        }
+        // 执行回收（复用 stop_agent 保持与现有代码风格一致）
+        self.stop_agent(&target).await?;
+        Ok(())
     }
 
     /// 内部启动逻辑（新建 AgentInstance 并插入 HashMap）

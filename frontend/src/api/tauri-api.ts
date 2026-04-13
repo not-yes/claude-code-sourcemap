@@ -213,15 +213,6 @@ async function retryableInvoke<T>(
   throw lastError!;
 }
 
-// -------- 并发流控制 --------
-
-export const MAX_CONCURRENT_STREAMS = 3;
-let activeStreamCount = 0;
-
-export function getActiveStreamCount(): number {
-  return activeStreamCount;
-}
-
 // -------- 核心执行 --------
 
 /**
@@ -292,26 +283,8 @@ export async function executeStream(
   const agentId = sessionOpts.agentId;
   console.warn(`[executeStream] 进入, agentId=${agentId}, backendSessionId=${sessionId}`);
 
-  // 并发流数量检查
-  if (activeStreamCount >= MAX_CONCURRENT_STREAMS) {
-    throw new Error("STREAM_LIMIT_EXCEEDED");
-  }
-  // 只在第一个流开始时清空（没有其他活跃流）
-  if (activeStreamCount === 0) {
-    runtimePanelStore.getState().clearSession();
-  }
-  activeStreamCount++;
-  let decremented = false;
-  const decrementCount = () => {
-    if (!decremented) {
-      decremented = true;
-      activeStreamCount--;
-    }
-  };
-
   // 已中止则直接返回
   if (signal?.aborted) {
-    decrementCount();
     onDone(null, true);
     return;
   }
@@ -409,7 +382,6 @@ export async function executeStream(
           }
 
           cleanup();
-          decrementCount();
 
           const timeoutError = new TimeoutError(
             `执行空闲超时：连续 ${IDLE_TIMEOUT_MS / 1000} 秒未收到事件 (streamId=${streamId}, eventCount=${eventCount})`
@@ -438,7 +410,6 @@ export async function executeStream(
         }
 
         cleanup();
-        decrementCount();
 
         const timeoutError = new TimeoutError(
           `执行总超时：超过 ${ABSOLUTE_TIMEOUT_MS / 1000 / 60} 分钟 (streamId=${streamId}, eventCount=${eventCount})`
@@ -457,7 +428,6 @@ export async function executeStream(
           if (!done) {
             done = true;
             cleanup();
-            decrementCount();
             onDone(null, true);
           }
         },
@@ -475,7 +445,6 @@ export async function executeStream(
         if (!done) {
           done = true;
           cleanup();
-          decrementCount();
           onDone(null);
         }
       }
@@ -517,7 +486,6 @@ export async function executeStream(
           // 流错误（$/streamError 通道推送）
           done = true;
           cleanup();
-          decrementCount();
           const errorData = data as { type: "error"; message?: string; code?: string };
           const errorCode = errorData.code ?? 'UNKNOWN';
           const errorMsg = errorData.message ?? "Stream error";
@@ -539,7 +507,6 @@ export async function executeStream(
     console.log(`[executeStream] invoke 完成, streamId=${streamId}, sessionId=${sessionId}, agentId=${agentId}`);
 
   } catch (e) {
-    decrementCount();
     onDone(e instanceof Error ? e : new Error(String(e)));
   }
 }
