@@ -70,7 +70,15 @@ jobs:
 
       - name: Install claude-code dependencies
         working-directory: claude-code
-        run: bun install --ignore-scripts
+        run: |
+          # Initialize a temporary git repo for husky
+          git init -q
+          git config user.email "ci@example.com"
+          git config user.name "CI"
+          # Install dependencies with husky prepare script
+          bun install
+          # Clean up git repo
+          rm -rf .git
 
       - name: Build sidecar
         working-directory: claude-code
