@@ -70,13 +70,16 @@ jobs:
 
       - name: Install claude-code dependencies
         working-directory: claude-code
+        env:
+          # Skip ripgrep download (we have prebuilt binaries in package/vendor/ripgrep/)
+          ELECTRON_RUN_AS_NODE: "1"
         run: |
           # Initialize a temporary git repo for husky
           git init -q
           git config user.email "ci@example.com"
           git config user.name "CI"
-          # Install dependencies with husky prepare script
-          bun install
+          # Install dependencies, skip @vscode/ripgrep postinstall
+          bun install --ignore-scripts
           # Clean up git repo
           rm -rf .git
 
