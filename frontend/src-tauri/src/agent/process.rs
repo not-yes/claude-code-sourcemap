@@ -35,6 +35,19 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
             .unwrap_or(exe_path.clone());
 
         log::info!("resolve_sidecar_path: [2] 当前 exe 目录: {:?}", exe_dir);
+        
+        // 列出 exe 目录内容(仅 Windows 调试)
+        #[cfg(windows)]
+        {
+            if let Ok(entries) = std::fs::read_dir(&exe_dir) {
+                let files: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_file())
+                    .filter_map(|e| e.file_name().to_str().map(String::from))
+                    .collect();
+                log::info!("resolve_sidecar_path: [2-debug] exe 目录文件: {:?}", files);
+            }
+        }
 
         // 2a. exe 同目录,无后缀名称(生产打包常见)
         let sidecar_plain = exe_dir.join("claude-sidecar");
@@ -55,35 +68,6 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
             return Ok(sidecar_platform);
         }
         tried_paths.push(sidecar_platform);
-
-        // 2c. Windows 特殊处理:检查 binaries/ 子目录
-        #[cfg(windows)]
-        {
-            let binaries_dir = exe_dir.join("binaries");
-            if binaries_dir.exists() {
-                log::info!("resolve_sidecar_path: [2c] 发现 binaries 目录: {:?}", binaries_dir);
-                
-                // 检查带 .exe 的平台特定名称
-                let sidecar_in_binaries = binaries_dir.join(format!(
-                    "claude-sidecar-{}{}",
-                    get_target_triple(),
-                    ".exe"
-                ));
-                log::info!("resolve_sidecar_path: [2c] 检查 {:?} => 存在: {}", sidecar_in_binaries, sidecar_in_binaries.exists());
-                if sidecar_in_binaries.exists() {
-                    return Ok(sidecar_in_binaries);
-                }
-                tried_paths.push(sidecar_in_binaries);
-                
-                // 检查不带后缀的通用名称
-                let sidecar_plain_binaries = binaries_dir.join("claude-sidecar");
-                log::info!("resolve_sidecar_path: [2c-plain] 检查 {:?} => 存在: {}", sidecar_plain_binaries, sidecar_plain_binaries.exists());
-                if sidecar_plain_binaries.exists() {
-                    return Ok(sidecar_plain_binaries);
-                }
-                tried_paths.push(sidecar_plain_binaries);
-            }
-        }
 
         // 2c. Dev 模式：从 target/debug/exe 向上3级找 src-tauri/binaries/
         // current_exe = .../src-tauri/target/debug/claude-code-desktop

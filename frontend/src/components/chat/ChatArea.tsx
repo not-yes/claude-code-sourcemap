@@ -106,12 +106,11 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   }, [agentId, agentWorkingDirectory, workingDirectories, setAgentWorkingDirectory]);
   
   // 每个 Agent 独立的 backendSessionId（按工作目录隔离）
-  const [activeBackendSessionId, setActiveBackendSessionId] = useState<string | null>(() => {
-    if (!currentCwd) return null; // cwd 未就绪，不加载
-    return loadPersistedBackendSession(agentId, currentCwd);
-  });
+  // 初始化为 null，完全依赖 useEffect 加载（避免 Zustand rehydration 异步问题）
+  const [activeBackendSessionId, setActiveBackendSessionId] = useState<string | null>(null);
   
-  // 工作目录变化时，重新加载对应的会话
+  // 工作目录就绪后（或变化时），重新加载对应的会话
+  // 当 currentCwd 从空字符串变为有效值时，此 effect 会触发并正确加载 sessionId
   useEffect(() => {
     if (!currentCwd) return; // cwd 未就绪，跳过
     const newSessionId = loadPersistedBackendSession(agentId, currentCwd);
@@ -752,7 +751,15 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             正在启动 Agent...
           </div>
         )}
-        {messages.length === 0 && !loadingHistory && (
+        {!currentCwd && (
+          <div className="flex flex-col items-center justify-center py-16 px-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent shrink-0" />
+              正在加载工作目录...
+            </div>
+          </div>
+        )}
+        {messages.length === 0 && !loadingHistory && currentCwd && (
           <div className="flex flex-col items-center justify-center py-16 px-4">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mb-6 shadow-lg shadow-primary/10 animate-scale-in">
               <Bot size={32} className="text-primary/70" />
@@ -780,7 +787,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             </div>
           </div>
         )}
-        {messages.length > 0 && !loadingHistory && (
+        {messages.length > 0 && !loadingHistory && currentCwd && (
           <div
             style={{
               height: `${virtualizer.getTotalSize()}px`,
