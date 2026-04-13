@@ -17,24 +17,26 @@ use tokio::process::{Child, Command};
 pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
     let mut tried_paths: Vec<PathBuf> = Vec::new();
 
-    // 1. 环境变量覆盖（调试用）
+    // 1. 环境变量覆盖(调试用)
     if let Ok(path) = std::env::var("CLAUDE_SIDECAR_PATH") {
         let p = PathBuf::from(&path);
         if p.exists() {
             log::info!("resolve_sidecar_path: [1] 使用环境变量路径 {:?}", p);
             return Ok(p);
         }
-        log::warn!("resolve_sidecar_path: [1] 环境变量 CLAUDE_SIDECAR_PATH={} 指向的文件不存在，继续查找", path);
+        log::warn!("resolve_sidecar_path: [1] 环境变量 CLAUDE_SIDECAR_PATH={} 指向的文件不存在,继续查找", path);
         tried_paths.push(p);
     }
 
-    // 2. 使用当前可执行文件路径来查找 externalBin（生产打包后 externalBin 在 MacOS/ 目录）
+    // 2. 使用当前可执行文件路径来查找 externalBin(生产打包后 externalBin 在 MacOS/ 目录)
     if let Ok(exe_path) = std::env::current_exe() {
         let exe_dir: PathBuf = exe_path.parent()
             .map(|p: &std::path::Path| p.to_path_buf())
             .unwrap_or(exe_path.clone());
 
-        // 2a. exe 同目录，无后缀名称（生产打包常见）
+        log::info!("resolve_sidecar_path: [2] 当前 exe 目录: {:?}", exe_dir);
+
+        // 2a. exe 同目录,无后缀名称(生产打包常见)
         let sidecar_plain = exe_dir.join("claude-sidecar");
         log::info!("resolve_sidecar_path: [2a] 检查 {:?} => 存在: {}", sidecar_plain, sidecar_plain.exists());
         if sidecar_plain.exists() {
@@ -42,7 +44,7 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
         }
         tried_paths.push(sidecar_plain);
 
-        // 2b. exe 同目录，平台特定名称
+        // 2b. exe 同目录,平台特定名称 (Windows 需要 .exe)
         let sidecar_platform = exe_dir.join(format!(
             "claude-sidecar-{}{}",
             get_target_triple(),
@@ -53,6 +55,35 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
             return Ok(sidecar_platform);
         }
         tried_paths.push(sidecar_platform);
+
+        // 2c. Windows 特殊处理:检查 binaries/ 子目录
+        #[cfg(windows)]
+        {
+            let binaries_dir = exe_dir.join("binaries");
+            if binaries_dir.exists() {
+                log::info!("resolve_sidecar_path: [2c] 发现 binaries 目录: {:?}", binaries_dir);
+                
+                // 检查带 .exe 的平台特定名称
+                let sidecar_in_binaries = binaries_dir.join(format!(
+                    "claude-sidecar-{}{}",
+                    get_target_triple(),
+                    ".exe"
+                ));
+                log::info!("resolve_sidecar_path: [2c] 检查 {:?} => 存在: {}", sidecar_in_binaries, sidecar_in_binaries.exists());
+                if sidecar_in_binaries.exists() {
+                    return Ok(sidecar_in_binaries);
+                }
+                tried_paths.push(sidecar_in_binaries);
+                
+                // 检查不带后缀的通用名称
+                let sidecar_plain_binaries = binaries_dir.join("claude-sidecar");
+                log::info!("resolve_sidecar_path: [2c-plain] 检查 {:?} => 存在: {}", sidecar_plain_binaries, sidecar_plain_binaries.exists());
+                if sidecar_plain_binaries.exists() {
+                    return Ok(sidecar_plain_binaries);
+                }
+                tried_paths.push(sidecar_plain_binaries);
+            }
+        }
 
         // 2c. Dev 模式：从 target/debug/exe 向上3级找 src-tauri/binaries/
         // current_exe = .../src-tauri/target/debug/claude-code-desktop
