@@ -70,7 +70,7 @@ jobs:
 
       - name: Install claude-code dependencies
         working-directory: claude-code
-        run: bun install
+        run: bun install --ignore-scripts
 
       - name: Build sidecar
         working-directory: claude-code
