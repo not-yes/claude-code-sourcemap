@@ -532,6 +532,14 @@ class AgentCoreImpl implements AgentCore {
       })
       process.stderr.write(`[AgentCore] 开始 submitMessage, toolCount=${tools.length}, historyMessages=${this.messageHistory.length}\n`)
 
+      // 在真正进入 LLM 循环前 yield 一个心跳消息，重置前端的空闲超时计时器
+      // 这样如果 LLM API 首 token 响应较慢（如长上下文），前端不会 eventCount=0 超时
+      yield {
+        type: 'system_message',
+        level: 'info',
+        content: '正在分析问题，请稍候...',
+      }
+
       // 迭代 SDK 消息，转换为 SidecarStreamEvent
       let assistantTextBuffer = ''
       let lastStopReason = 'end_turn'

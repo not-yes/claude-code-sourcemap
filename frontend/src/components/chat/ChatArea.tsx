@@ -449,11 +449,29 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       cwd: latestCwd,
     };
 
+    let streamFinished = false;
+
     try {
       await executeStream(content, sessionOpts, {
         signal: abortControllerRef.current.signal,
         onChunk: () => {},
         onEvent: (event) => {
+          // 如果之前因超时提前结束，但后续事件仍到达（LLM 只是极慢），复活流式状态
+          if (streamFinished) {
+            streamFinished = false;
+            inFlightRef.current = true;
+            setLoading(true);
+            // 清除 onDone 可能追加的错误文本
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== assistantMsg.id) return m;
+                const cleanContent = (m.content || '')
+                  .replace(/\n\n---\n⚠️ .*/, '')
+                  .replace(/^❌ .*/, '');
+                return { ...m, content: cleanContent };
+              })
+            );
+          }
           setMessages((prev) => {
             const next = prev.map((m) => {
               if (m.id !== assistantMsg.id) return m;
@@ -570,6 +588,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
           });
         },
         onDone: (error, aborted) => {
+          streamFinished = true;
           inFlightRef.current = false;
           setLoading(false);
           abortControllerRef.current = null;

@@ -383,7 +383,7 @@ impl AgentManager {
             while let Some(line) = write_rx.recv().await {
                 msg_count += 1;
                 if msg_count <= 100 || msg_count % 50 == 0 {
-                    let preview = if line.len() > 100 { &line[..100] } else { &line };
+                    let preview: String = line.chars().take(100).collect();
                     process::debug_log(&format!("[stdin-writer][{}] #{} writing: {}", writer_agent_id, msg_count, preview));
                 }
                 let mut agents = agents_for_writer.write().await;

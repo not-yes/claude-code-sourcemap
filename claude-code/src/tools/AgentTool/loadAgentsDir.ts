@@ -492,9 +492,12 @@ export function parseAgentFromJson(
       ...(disallowedTools !== undefined ? { disallowedTools } : {}),
       getSystemPrompt: () => {
         if (isAutoMemoryEnabled() && parsed.memory) {
-          return (
-            systemPrompt + '\n\n' + loadAgentMemoryPrompt(name, parsed.memory)
-          )
+          const memoryPrompt = loadAgentMemoryPrompt(name, parsed.memory)
+          // 去重：如果 agent soul 里已经包含 Persistent Agent Memory 章节，不再追加
+          if (systemPrompt.includes('# Persistent Agent Memory') || systemPrompt.includes('Persistent Agent Memory')) {
+            return systemPrompt
+          }
+          return systemPrompt + '\n\n' + memoryPrompt
         }
         return systemPrompt
       },
@@ -738,6 +741,10 @@ export function parseAgentFromMarkdown(
       getSystemPrompt: () => {
         if (isAutoMemoryEnabled() && memory) {
           const memoryPrompt = loadAgentMemoryPrompt(agentType, memory)
+          // 去重：如果 agent soul 里已经包含 Persistent Agent Memory 章节，不再追加
+          if (systemPrompt.includes('# Persistent Agent Memory') || systemPrompt.includes('Persistent Agent Memory')) {
+            return systemPrompt
+          }
           return systemPrompt + '\n\n' + memoryPrompt
         }
         return systemPrompt

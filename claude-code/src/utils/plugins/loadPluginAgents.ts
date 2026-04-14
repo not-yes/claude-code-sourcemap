@@ -205,6 +205,10 @@ async function loadAgentFromFile(
       getSystemPrompt: () => {
         if (isAutoMemoryEnabled() && memory) {
           const memoryPrompt = loadAgentMemoryPrompt(agentType, memory)
+          // 去重：如果 agent soul 里已经包含 Persistent Agent Memory 章节，不再追加
+          if (systemPrompt.includes('# Persistent Agent Memory') || systemPrompt.includes('Persistent Agent Memory')) {
+            return systemPrompt
+          }
           return systemPrompt + '\n\n' + memoryPrompt
         }
         return systemPrompt

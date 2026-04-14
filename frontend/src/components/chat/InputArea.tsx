@@ -73,7 +73,8 @@ export function InputArea({
   );
 
   const handleSend = useCallback(async (overrideValue?: string) => {
-    const trimmed = (overrideValue ?? valueRef.current).trim();
+    const rawValue = overrideValue ?? valueRef.current ?? '';
+    const trimmed = typeof rawValue === 'string' ? rawValue.trim() : '';
     console.warn(`[InputArea:handleSend] 进入, sending=${sending}, disabled=${disabled}, loading=${loading}, value长度=${trimmed.length}`);
     if (!trimmed || sending || disabled || loading) {
       console.warn(`[InputArea:handleSend] 被阻止! trimmed=${!!trimmed}, sending=${sending}, disabled=${disabled}, loading=${loading}`);

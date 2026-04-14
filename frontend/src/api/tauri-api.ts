@@ -350,7 +350,7 @@ export async function executeStream(
     }, 10_000);
 
     // 双层超时保护：空闲超时（每次收到事件重置）+ 绝对超时（总上限）
-    const IDLE_TIMEOUT_MS = 120_000;           // 空闲超时：120 秒无事件
+    const IDLE_TIMEOUT_MS = 600_000;           // 空闲超时：600 秒无事件（应对 LLM 首 token 极慢的场景）
     const ABSOLUTE_TIMEOUT_MS = 30 * 60 * 1000; // 绝对超时：30 分钟总上限
 
     const idleTimeout = { handle: undefined as ReturnType<typeof setTimeout> | undefined };
