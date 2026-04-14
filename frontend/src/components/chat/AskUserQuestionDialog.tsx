@@ -276,9 +276,9 @@ export function AskUserQuestionDialog({ request, onDecision }: AskUserQuestionDi
   useEffect(() => {
     if (request) {
       const qs = parseQuestions(request.toolInput);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnswers(qs.map(() => ({ selected: [], otherText: "", otherSelected: false })));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.requestId]);
 
   // 超时自动拒绝

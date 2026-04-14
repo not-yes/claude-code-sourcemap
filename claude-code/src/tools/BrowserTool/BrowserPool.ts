@@ -10,7 +10,7 @@ import {
   DEFAULT_BROWSER_CHANNEL,
   MAX_CONTEXTS,
 } from './constants.js'
-import { applyStealthToContext, getStealthUserAgent } from './stealth.js'
+import { applyStealthToContext, getStealthUserAgent, STEALTH_ARGS } from './stealth.js'
 
 interface SessionEntry {
   context: BrowserContext
@@ -94,7 +94,7 @@ function buildLaunchOptions(headless: boolean): LaunchOptions {
 
   const base: LaunchOptions = {
     headless,
-    args: [...BROWSER_LAUNCH_ARGS],
+    args: [...BROWSER_LAUNCH_ARGS, ...STEALTH_ARGS],
   }
 
   if (executablePath) {
@@ -145,7 +145,7 @@ class BrowserPool {
         )
         this.browser = await chromium.launch({
           headless: true,
-          args: [...BROWSER_LAUNCH_ARGS],
+          args: [...BROWSER_LAUNCH_ARGS, ...STEALTH_ARGS],
         })
       } else {
         throw err
@@ -204,7 +204,7 @@ class BrowserPool {
         )
         this.persistentContext = await chromium.launchPersistentContext(profileDir, {
           headless: false,
-          args: [...BROWSER_LAUNCH_ARGS],
+          args: [...BROWSER_LAUNCH_ARGS, ...STEALTH_ARGS],
           viewport: { width: 1920, height: 1080 },
           locale: 'zh-CN',
           timezoneId: 'Asia/Shanghai',

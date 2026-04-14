@@ -165,6 +165,7 @@ export function ConversationHistorySheet({
     } finally {
       setDeleting(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deleteTarget, loadSessions]);
 
   return (

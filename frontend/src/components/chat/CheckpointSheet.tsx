@@ -420,6 +420,7 @@ export function CheckpointSheet({
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   // ── load timeline ──────────────────────────────────────────────────────────
@@ -435,6 +436,7 @@ export function CheckpointSheet({
     } finally {
       setTimelineLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   // ── effects ────────────────────────────────────────────────────────────────
