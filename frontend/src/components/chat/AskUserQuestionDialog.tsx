@@ -276,6 +276,7 @@ export function AskUserQuestionDialog({ request, onDecision }: AskUserQuestionDi
   useEffect(() => {
     if (request) {
       const qs = parseQuestions(request.toolInput);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAnswers(qs.map(() => ({ selected: [], otherText: "", otherSelected: false })));
     }
   }, [request?.requestId]);

@@ -38,6 +38,7 @@ export function AgentAvatar({
   const useCustomLetter = !!meta?.avatarLetter;
 
   // DiceBear 头像 URL（始终调用，避免条件调用 Hook）
+  // 注意：diceBearStyle 不在 AgentMetadata 中，始终为 undefined，故不加入依赖
   const avatarUrl = useMemo(() => {
     // 如果有自定义图片，返回 null（不使用 DiceBear）
     if (hasCustomImage) return null;
@@ -48,7 +49,8 @@ export function AgentAvatar({
       size: sizePixels[size] * 2,
       radius: 50,
     });
-  }, [agentId, size, hasCustomImage, diceBearStyle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, size, hasCustomImage]);
 
   // 优先：本地图片
   if (hasCustomImage && meta?.avatarImage) {

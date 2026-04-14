@@ -58,6 +58,7 @@ export function PlanApprovalDialog({ request, onDecision }: PlanApprovalDialogPr
   useEffect(() => {
     if (!request) return;
     const planText = extractPlanText(request);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- batch state updates for initialization
     setEditedPlan(planText);
     setIsEditMode(false);
     setShowDenyReason(false);
