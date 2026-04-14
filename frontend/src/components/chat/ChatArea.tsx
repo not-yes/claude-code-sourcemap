@@ -1,7 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   executeStream,
-  getHealth,
   getSessionMessages,
   abortExecution,
   buildAgentEventName,
@@ -90,7 +89,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const sidecarConnected = useAppStore((s) => s.sidecarConnected);
   const agentStartLoading = useAppStore((s) => s.agentStartLoading);
   const setAgentStartLoading = useAppStore((s) => s.setAgentStartLoading);
-  const refreshRunningAgents = useAgentsStore((s) => s.refreshRunningAgents);
+  useAgentsStore((s) => s.refreshRunningAgents); // keep store connected
   const agentWorkingDirectory = useAppStore((s) => s.agentWorkingDirectory);
   const workingDirectories = useAppStore((s) => s.workingDirectories);
   const setAgentWorkingDirectory = useAppStore((s) => s.setAgentWorkingDirectory);
@@ -195,38 +194,44 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       </div>
     );
     return () => setChatHeaderAction(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, activeBackendSessionId, loading, setChatHeaderAction, setHistorySheetOpen, setCheckpointSheetOpen]);
 
   // 加载会话消息
+  // 使用 ref 避免在执行过程中因 activeBackendSessionId 变化而覆盖当前消息
+  const isInitialLoadRef = useRef(true);
   useEffect(() => {
-    // 优先从本地加载（包含未完成的对话）
+    // 只在首次挂载或显式 reload 时加载
+    // 执行过程中 complete 事件会修改 activeBackendSessionId，此时不应重新加载
+    if (!isInitialLoadRef.current && !chatHistoryReloadNonce) {
+      return;
+    }
+    isInitialLoadRef.current = false;
+    
+    // 优先从本地加载（包含完整 contentBlocks 的消息）
     const localTotal = getTotalMessageCount(agentId, currentCwd);
     const localMessages = loadMessagesPaginated(agentId, 0, PAGE_SIZE, currentCwd);
     
     if (localMessages.length > 0) {
-      // 本地有消息，优先使用本地（包含未完成的对话）
+      // 本地有完整消息，直接使用（包括 contentBlocks/thinking/tool 信息）
+      // 不覆盖，因为后端只保存纯文本，会丢失 UI 展示所需的 contentBlocks
       setMessages(localMessages);
       setIsTruncated(false);
       setHasMoreMessages(localTotal > PAGE_SIZE);
       messageOffsetRef.current = PAGE_SIZE;
       backendOffsetRef.current = 0;
       
-      // 如果有后端会话ID，尝试合并后端消息（但不覆盖本地）
+      // 仅做后端会话健康检查（不覆盖本地消息）
       if (activeBackendSessionId) {
-        getSessionMessages(activeBackendSessionId, agentId, { limit: PAGE_SIZE * 10 })
-          .then((backendMessages) => {
-            if (backendMessages.length > localMessages.length) {
-              // 后端有更多消息，合并（后端消息补充本地）
-              const converted = backendMessages.map((m, i) => sessionMessageToMessage(m, i));
-              setMessages(converted);
-            }
-          })
+        getSessionMessages(activeBackendSessionId, agentId, { limit: 1 })
           .catch(() => {
-            // 后端加载失败，保持本地消息
+            // 后端会话已失效，清空绑定
+            savePersistedBackendSession(agentId, null, currentCwd);
+            setActiveBackendSessionId(null);
           });
       }
     } else if (activeBackendSessionId) {
-      // 本地没有，从后端加载
+      // 本地没有，从后端加载（降级为纯文本）
       setLoadingHistory(true);
       getSessionMessages(activeBackendSessionId, agentId, { limit: PAGE_SIZE * 10 })
         .then(async (fullList) => {
@@ -315,8 +320,10 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     messageOffsetRef.current = PAGE_SIZE;
     backendOffsetRef.current = 0;
     setHasMoreMessages(false);
-    touchSession(agentId, currentCwd);
-    
+    if (currentCwd) {
+      touchSession(agentId, currentCwd);
+    }
+
     if (getLocalStorageUsagePercent() > 80) {
       cleanupOldSessions(10);
     }
@@ -326,6 +333,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     }
 
     // Agent 启动逻辑在 WorkingDirectorySelector 中处理
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, sidecarConnected, setCheckpointSheetOpen]);
 
   // Ref 保存最新状态和消息，用于卸载时保存（避免闭包陷阱）
@@ -336,23 +344,11 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const currentCwdRef = useRef(currentCwd);
   currentCwdRef.current = currentCwd;
   
-  // 保存消息到本地
-  useEffect(() => {
-    if (activeBackendSessionId) return;
-    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
-    saveDebounceRef.current = setTimeout(() => {
-      saveMessages(agentId, messages, currentCwd);
-      saveDebounceRef.current = null;
-    }, 500);
-    return () => {
-      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
-    };
-  }, [agentId, messages, activeBackendSessionId, currentCwd]);
-  
   // 组件卸载时立即保存消息（使用 ref 避免闭包陷阱）
   useEffect(() => {
     return () => {
-      if (!activeBackendSessionIdRef.current && messagesRef.current.length > 0) {
+      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+      if (messagesRef.current.length > 0) {
         saveMessages(agentId, messagesRef.current, currentCwdRef.current);
       }
     };
@@ -369,6 +365,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     setHasMoreMessages(false);
     messageOffsetRef.current = PAGE_SIZE;
     backendOffsetRef.current = 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
   const handleStop = useCallback(() => {
@@ -427,12 +424,13 @@ export function ChatArea({ agentId }: ChatAreaProps) {
 
     setMessages((prev) => {
       const next = [...prev, userMsg, assistantMsg];
-      if (next.length > MAX_MESSAGES_IN_MEMORY) {
-        setIsTruncated(true);
-        return next.slice(-MAX_MESSAGES_IN_MEMORY);
-      }
-      return next;
+      const trimmed = next.length > MAX_MESSAGES_IN_MEMORY ? next.slice(-MAX_MESSAGES_IN_MEMORY) : next;
+      if (next.length > MAX_MESSAGES_IN_MEMORY) setIsTruncated(true);
+      messagesRef.current = trimmed;
+      return trimmed;
     });
+    // 立即保存用户消息，防止发送后刷新丢失
+    saveMessages(agentId, messagesRef.current, currentCwdRef.current);
     setLoading(true);
 
     // 获取最新 cwd（防止闭包中 currentCwd 为空字符串）
@@ -456,8 +454,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
         signal: abortControllerRef.current.signal,
         onChunk: () => {},
         onEvent: (event) => {
-          setMessages((prev) =>
-            prev.map((m) => {
+          setMessages((prev) => {
+            const next = prev.map((m) => {
               if (m.id !== assistantMsg.id) return m;
               const blocks: MessageContentBlock[] = [...(m.contentBlocks || [])];
               let completionUsage: TokenUsage | undefined;
@@ -553,19 +551,39 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 .join('');
 
               return { ...m, contentBlocks: blocks, content: textContent, ...(completionUsage ? { usage: completionUsage } : {}) };
-            })
-          );
+            });
+            
+            // 同步更新 ref，确保 ref 与 state 一致
+            messagesRef.current = next;
+            
+            // 调度保存：完成时立即保存，流式时 500ms 防抖
+            if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+            const lastMsg = next[next.length - 1];
+            const isCompleted = lastMsg?.role === 'assistant' && lastMsg?.usage !== undefined;
+            const delay = isCompleted ? 0 : 500;
+            saveDebounceRef.current = setTimeout(() => {
+              saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+              saveDebounceRef.current = null;
+            }, delay);
+            
+            return next;
+          });
         },
         onDone: (error, aborted) => {
           inFlightRef.current = false;
           setLoading(false);
           abortControllerRef.current = null;
-          if (aborted) return;
+          
+          if (aborted) {
+            saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+            return;
+          }
+          
           if (error) {
             const errMsg = error.message || "未知错误";
             useLogStore.getState().addError(`execute: ${errMsg}`);
-            setMessages((prev) =>
-              prev.map((m) => {
+            setMessages((prev) => {
+              const next = prev.map((m) => {
                 if (m.id !== assistantMsg.id) return m;
                 const hasContent = (m.content && m.content.length > 10) || (m.contentBlocks && m.contentBlocks.length > 0);
                 if (hasContent) {
@@ -573,10 +591,17 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 } else {
                   return { ...m, content: `❌ ${errMsg}` };
                 }
-              })
-            );
+              });
+              messagesRef.current = next;
+              return next;
+            });
+            // 错误状态更新后立刻保存
+            if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+            saveMessages(agentId, messagesRef.current, currentCwdRef.current);
             toast.error(errMsg);
           } else {
+            if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+            saveMessages(agentId, messagesRef.current, currentCwdRef.current);
             toast.success("任务执行完成");
           }
         },
@@ -628,6 +653,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       );
       toast.error(errMsg);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, activeBackendSessionId, agentStartLoading]);
 
   const handleRetry = useCallback((userContent: string) => {
@@ -683,6 +709,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     } finally {
       setLoadingMore(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingMore, hasMoreMessages, agentId, activeBackendSessionId]);
 
   // 虚拟列表

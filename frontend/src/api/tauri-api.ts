@@ -384,7 +384,9 @@ export async function executeStream(
           cleanup();
 
           const timeoutError = new TimeoutError(
-            `执行空闲超时：连续 ${IDLE_TIMEOUT_MS / 1000} 秒未收到事件 (streamId=${streamId}, eventCount=${eventCount})`
+            eventCount === 0
+              ? `Agent 在 ${IDLE_TIMEOUT_MS / 1000} 秒内没有响应，可能是某个工具或网络请求阻塞了（streamId=${streamId}）`
+              : `执行空闲超时：连续 ${IDLE_TIMEOUT_MS / 1000} 秒未收到事件 (streamId=${streamId}, eventCount=${eventCount})`
           );
           Object.assign(timeoutError, { cause: { streamId, eventCount, recoverable: true, type: 'idle' } });
           onDone(timeoutError, false);
