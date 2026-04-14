@@ -19,6 +19,7 @@ function defaultContentListWidths(): Record<NavPanel, number> {
     cron: CONTENT_LIST_WIDTH_DEFAULT,
     skills: CONTENT_LIST_WIDTH_DEFAULT,
     settings: CONTENT_LIST_WIDTH_DEFAULT,
+    workspace: CONTENT_LIST_WIDTH_DEFAULT,
   };
 }
 
@@ -257,7 +258,7 @@ export const useAppStore = create<AppState>()(
             : null;
         const merged: AppState = {
           ...current,
-          ...(patch ?? {}),
+          ...(patch ?? {}) as Partial<AppState>,
           contentListWidthByNav: normalizeContentListWidths(
             patch?.contentListWidthByNav ?? current.contentListWidthByNav
           ),

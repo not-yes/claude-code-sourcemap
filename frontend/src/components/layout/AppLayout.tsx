@@ -16,9 +16,9 @@ export function AppLayout() {
   const setAgentInfoDialogOpenId = useAppStore(
     (s) => s.setAgentInfoDialogOpenId
   );
-  // RuntimePanel 暂停使用，保留变量供后续恢复
-  const activeNav = useAppStore((s) => s.activeNav); // eslint-disable-line @typescript-eslint/no-unused-vars
-  const selectedAgentId = useAppStore((s) => s.selectedAgentId); // eslint-disable-line @typescript-eslint/no-unused-vars
+  // RuntimePanel 暂停使用，保留订阅关系供后续恢复
+  void useAppStore((s) => s.activeNav);
+  void useAppStore((s) => s.selectedAgentId);
   const runtimePanelCollapsed = useAppStore((s) => s.runtimePanelCollapsed);
   const runtimePanelWidth = useAppStore((s) => s.runtimePanelWidth);
   const setRuntimePanelWidth = useAppStore((s) => s.setRuntimePanelWidth);

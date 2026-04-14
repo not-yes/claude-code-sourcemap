@@ -34,7 +34,6 @@ export function AgentAvatar({
 
   // 检查头像类型
   const hasCustomImage = !!meta?.avatarImage;
-  const diceBearStyle = meta?.diceBearStyle;
   const useCustomLetter = !!meta?.avatarLetter;
 
   // DiceBear 头像 URL（始终调用，避免条件调用 Hook）
@@ -45,11 +44,9 @@ export function AgentAvatar({
 
     return generateDiceBearUrl({
       seed: agentId,
-      style: diceBearStyle,
       size: sizePixels[size] * 2,
       radius: 50,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, size, hasCustomImage]);
 
   // 优先：本地图片

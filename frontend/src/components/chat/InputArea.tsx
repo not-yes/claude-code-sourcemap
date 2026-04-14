@@ -72,8 +72,8 @@ export function InputArea({
     [value, mentionState]
   );
 
-  const handleSend = useCallback(async (overrideValue?: string) => {
-    const rawValue = overrideValue ?? valueRef.current ?? '';
+  const handleSend = useCallback(async () => {
+    const rawValue = valueRef.current ?? '';
     const trimmed = typeof rawValue === 'string' ? rawValue.trim() : '';
     console.warn(`[InputArea:handleSend] 进入, sending=${sending}, disabled=${disabled}, loading=${loading}, value长度=${trimmed.length}`);
     if (!trimmed || sending || disabled || loading) {
@@ -152,7 +152,7 @@ export function InputArea({
           }
           setValue(sendContent);
           valueRef.current = sendContent;
-          handleSend(sendContent);
+          handleSend();
         } else {
           // 第一次 Enter：记录时间，允许默认换行
           lastEnterTimeRef.current = now;
