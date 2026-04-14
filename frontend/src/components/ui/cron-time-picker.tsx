@@ -56,16 +56,16 @@ export function CronTimePicker({ value, onChange }: CronTimePickerProps) {
   const isInitialized = useRef(false);
 
   // 当 value 从外部改变时，重新解析
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     // 跳过首次渲染，避免与初始 state 冲突
     if (!isInitialized.current) {
       isInitialized.current = true;
       return;
     }
-    
+
     const p = parseCron(value);
     if (p.hour !== "*" && p.minute !== "*" && p.dayOfMonth === "*" && p.month === "*" && p.dayOfWeek === "*") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFrequency("daily");
       setHour(p.hour);
       setMinute(p.minute);

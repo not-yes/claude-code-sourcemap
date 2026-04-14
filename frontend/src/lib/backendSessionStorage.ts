@@ -17,7 +17,7 @@ const PREFIX = "claude_backend_session_";
 function makeKey(agentKey: string, cwd?: string): string {
   if (cwd) {
     // 工作目录路径可能包含特殊字符，进行简单转义
-    const safeCwd = cwd.replace(/[:\/\\]/g, '_');
+    const safeCwd = cwd.replace(/[:/\\]/g, '_');
     return `${PREFIX}${agentKey}_${safeCwd}`;
   }
   return `${PREFIX}${agentKey}`;

@@ -8,7 +8,7 @@ const MAX_MESSAGES = 500;
  */
 function makeKey(sessionId: string, cwd?: string): string {
   if (cwd) {
-    const safeCwd = cwd.replace(/[:\/\\]/g, '_');
+    const safeCwd = cwd.replace(/[:/\\]/g, '_');
     return `${STORAGE_PREFIX}${sessionId}_${safeCwd}`;
   }
   return `${STORAGE_PREFIX}${sessionId}`;
@@ -169,7 +169,7 @@ const SESSION_TIMESTAMP_PREFIX = 'claude_session_ts_';
  */
 export function touchSession(sessionId: string, cwd?: string): void {
   try {
-    const tsKey = `${SESSION_TIMESTAMP_PREFIX}${sessionId}${cwd ? '_' + cwd.replace(/[:\/\\]/g, '_') : ''}`;
+    const tsKey = `${SESSION_TIMESTAMP_PREFIX}${sessionId}${cwd ? '_' + cwd.replace(/[:/\\]/g, '_') : ''}`;
     localStorage.setItem(tsKey, Date.now().toString());
   } catch { /* ignore quota errors */ }
 }

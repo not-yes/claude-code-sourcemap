@@ -17,17 +17,11 @@ export function AppLayout() {
     (s) => s.setAgentInfoDialogOpenId
   );
   // RuntimePanel 暂停使用，保留变量供后续恢复
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const activeNav = useAppStore((s) => s.activeNav);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const selectedAgentId = useAppStore((s) => s.selectedAgentId);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const activeNav = useAppStore((s) => s.activeNav); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const selectedAgentId = useAppStore((s) => s.selectedAgentId); // eslint-disable-line @typescript-eslint/no-unused-vars
   const runtimePanelCollapsed = useAppStore((s) => s.runtimePanelCollapsed);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const runtimePanelWidth = useAppStore((s) => s.runtimePanelWidth);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const setRuntimePanelWidth = useAppStore((s) => s.setRuntimePanelWidth);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const toggleRuntimePanel = useAppStore((s) => s.toggleRuntimePanel);
   const { agents } = useAgents();
 
