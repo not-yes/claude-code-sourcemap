@@ -529,10 +529,18 @@ export const AgentTool = buildTool({
             `Agent type '${effectiveType}' has been denied by permission rule '${AGENT_TOOL_NAME}(${effectiveType})' from ${denyRule?.source ?? 'settings'}.`,
           )
         }
+        const availableAgents = agents.map(a => a.agentType).join(', ')
+        const availableSkills = toolUseContext.options.commands
+          .filter(c => c.type === 'prompt')
+          .map(c => c.name)
+          .slice(0, 20)
+          .join(', ')
         throw new Error(
-          `Agent type '${effectiveType}' not found. Available agents: ${agents
-            .map(a => a.agentType)
-            .join(', ')}`,
+          `Agent type '${effectiveType}' not found. ` +
+          `Available agents: ${availableAgents || 'none'}. ` +
+          `(Hint: "${effectiveType}" might be a skill name rather than an agent. ` +
+          `If so, use the relevant tools directly instead of spawning a subagent. ` +
+          `Related skills: ${availableSkills || 'none'}.)`,
         )
       }
       selectedAgent = found

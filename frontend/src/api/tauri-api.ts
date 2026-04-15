@@ -265,6 +265,8 @@ export type ExecuteStreamSessionOptions = {
   agentId?: string;
   /** 工作目录（Agent 启动时使用） */
   cwd?: string;
+  /** 权限模式（默认由 sidecar entry.ts 保持 interactive） */
+  permissionMode?: 'auto-approve' | 'interactive' | 'plan-only' | 'deny-all';
 };
 
 /**
@@ -330,6 +332,7 @@ export async function executeStream(
       ...(agentId ? { agentId } : {}),
       ...(agentSystemPrompt ? { systemPrompt: agentSystemPrompt } : {}),
       ...(sessionOpts.cwd ? { cwd: sessionOpts.cwd } : {}),
+      ...(sessionOpts.permissionMode ? { permissionMode: sessionOpts.permissionMode } : {}),
       streamId,  // 将前端生成的 streamId 传给 Rust
     };
     console.log(`[executeStream] 发起 agent_execute: agentId=${agentId ?? 'main'}, sessionId=${sessionId}, 有systemPrompt=${!!agentSystemPrompt}, streamId=${streamId}, options=`, JSON.stringify(execOptions));

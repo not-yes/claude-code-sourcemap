@@ -1,9 +1,103 @@
-/* P0: Custom fonts */
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* P0: Custom fonts - Outfit + Noto Sans SC + JetBrains Mono */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* Qoder IDE Light Theme - based on Qoder_light_default.json */
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 215 26% 22%;
+    --card: 220 29% 97%;
+    --card-foreground: 215 26% 22%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 26% 22%;
+    --primary: 142 66% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 29% 97%;
+    --secondary-foreground: 215 26% 22%;
+    --muted: 220 29% 97%;
+    --muted-foreground: 215 15% 48%;
+    --accent: 206 100% 68%;
+    --accent-foreground: 215 26% 22%;
+    --destructive: 0 93% 63%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 18% 92%;
+    --input: 221 15% 83%;
+    --ring: 142 66% 45%;
+
+    /* Hide native number input spinners */
+    .no-spinner::-webkit-inner-spin-button,
+    .no-spinner::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .no-spinner[type=number] {
+      -moz-appearance: textfield;
+    }
+  }
+
+  /* Qoder IDE Dark Theme - based on Qoder_dark_default.json */
+  .dark {
+    --background: 210 4% 10%;
+    --foreground: 220 14% 91%;
+    --card: 210 5% 14%;
+    --card-foreground: 220 14% 91%;
+    --popover: 210 5% 14%;
+    --popover-foreground: 220 14% 91%;
+    --primary: 142 66% 45%;
+    --primary-foreground: 240 5% 7%;
+    --secondary: 210 5% 18%;
+    --secondary-foreground: 220 14% 91%;
+    --muted: 210 5% 18%;
+    --muted-foreground: 220 12% 78%;
+    --accent: 206 100% 68%;
+    --accent-foreground: 240 5% 7%;
+    --destructive: 0 93% 63%;
+    --destructive-foreground: 220 14% 91%;
+    --border: 210 13% 27%;
+    --input: 210 13% 27%;
+    --ring: 142 66% 45%;
+  }
+
+  /* Font family */
+  html, body {
+    font-family: 'Outfit', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    font-weight: 500;
+  }
+
+  body {
+    font-weight: 400;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+    font-weight: 500;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+    background: transparent !important;
+  }
+  body {
+    overflow: hidden;
+  }
+}
 
 @layer utilities {
   /* Entrance animations */
@@ -134,99 +228,12 @@
   }
 }
 
-@layer base {
-  /* Qoder IDE Light Theme - based on Qoder_light_default.json */
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 215 26% 22%;
-    --card: 220 29% 97%;
-    --card-foreground: 215 26% 22%;
-    --popover: 0 0% 100%;
-
-  /* Hide native number input spinners */
-  .no-spinner::-webkit-inner-spin-button,
-  .no-spinner::-webkit-outer-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-  }
-  .no-spinner[type=number] {
-    -moz-appearance: textfield;
-  }
-    --popover-foreground: 215 26% 22%;
-    --primary: 142 66% 45%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 29% 97%;
-    --secondary-foreground: 215 26% 22%;
-    --muted: 220 29% 97%;
-    --muted-foreground: 215 15% 48%;
-    --accent: 206 100% 68%;
-    --accent-foreground: 215 26% 22%;
-    --destructive: 0 93% 63%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 220 18% 92%;
-    --input: 221 15% 83%;
-    --ring: 142 66% 45%;
-  }
-
-  /* Qoder IDE Dark Theme - based on Qoder_dark_default.json */
-  .dark {
-    --background: 210 4% 10%;
-    --foreground: 220 14% 91%;
-    --card: 210 5% 14%;
-    --card-foreground: 220 14% 91%;
-    --popover: 210 5% 14%;
-    --popover-foreground: 220 14% 91%;
-    --primary: 142 66% 45%;
-    --primary-foreground: 240 5% 7%;
-    --secondary: 210 5% 18%;
-    --secondary-foreground: 220 14% 91%;
-    --muted: 210 5% 18%;
-    --muted-foreground: 220 12% 78%;
-    --accent: 206 100% 68%;
-    --accent-foreground: 240 5% 7%;
-    --destructive: 0 93% 63%;
-    --destructive-foreground: 220 14% 91%;
-    --border: 210 13% 27%;
-    --input: 210 13% 27%;
-    --ring: 142 66% 45%;
-  }
-
-  /* Font family - Outfit Medium */
-  html, body {
-    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  html {
-    font-weight: 500;
-  }
-
-  body {
-    font-weight: 400;
-  }
-
-  code, pre, .font-mono {
-    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
-    font-weight: 500;
-  }
+/* Hide native number input spinners - must be outside @layer */
+.no-spinner::-webkit-inner-spin-button,
+.no-spinner::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
-
-@layer base {
-  * {
-    @apply border-border;
-  }
-  html,
-  body,
-  #root {
-    height: 100%;
-    min-height: 100%;
-    margin: 0;
-    padding: 0;
-    background: transparent !important;
-  }
-  body {
-    overflow: hidden;
-  }
+.no-spinner[type=number] {
+  -moz-appearance: textfield;
 }
-

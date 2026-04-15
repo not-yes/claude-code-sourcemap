@@ -32,4 +32,6 @@ export interface PermissionDecision {
   answers?: Record<string, string>;
   /** ExitPlanMode 工具的更新输入 */
   updatedInput?: Record<string, unknown>;
+  /** 权限模式更新列表（如 setMode） */
+  permissionUpdates?: Array<{ type: string; mode?: string; destination?: string; [key: string]: unknown }>;
 }
