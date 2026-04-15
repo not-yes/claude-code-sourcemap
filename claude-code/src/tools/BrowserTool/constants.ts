@@ -56,8 +56,9 @@ export const CHROME_USER_DATA_DIRS: Record<string, string> = {
 }
 
 /**
- * BrowserTool 独立 profile 目录（避免与正在运行的 Chrome 产生锁冲突）。
- * 使用 launchPersistentContext 时，Playwright 将在此目录维护独立的 session 数据，
+ * BrowserTool 独立 profile 根目录（避免与正在运行的 Chrome 产生锁冲突）。
+ * 使用 launchPersistentContext 时，Playwright 将在 `<root>/<profileId>` 下维护独立的 session 数据，
  * 包括 Cookies、localStorage 等，实现跨 BrowserTool 调用的登录态持久化。
+ * 支持多账号/多公司隔离：每个 profileId 对应一个独立的 Chrome 进程和 profile 目录。
  */
-export const BROWSER_PROFILE_CACHE_DIR = '~/.claude/browser-profile'
+export const BROWSER_PROFILE_CACHE_DIR = '~/.claude/browser-profiles'

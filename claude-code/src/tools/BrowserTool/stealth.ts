@@ -61,95 +61,101 @@ export function getStealthUserAgent(): string {
  * 因此网站的检测代码无法在我们修改属性之前抢先读取。
  */
 export async function applyStealthToContext(context: BrowserContext): Promise<void> {
-  await context.addInitScript(() => {
-    // ---- 1. 覆盖 navigator.webdriver（最关键的检测点） ----
-    // 自动化浏览器下此属性为 true，正常浏览器为 undefined
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => undefined,
-      configurable: true,
-    })
+  const runtimePlatform =
+    process.platform === 'darwin' ? 'MacIntel' : process.platform === 'win32' ? 'Win32' : 'Linux x86_64'
 
-    // ---- 2. 模拟 window.chrome.runtime（非 headless 的 Chrome 应有此对象） ----
-    const win = window as unknown as Window & { chrome?: Record<string, unknown> }
-    if (!win.chrome) {
-      win.chrome = {}
-    }
-    const chrome = win.chrome
-    if (!chrome['runtime']) {
-      chrome['runtime'] = {
-        // 模拟最常被检测的属性
-        connect: () => {},
-        sendMessage: () => {},
-        id: undefined,
-        onMessage: { addListener: () => {}, removeListener: () => {} },
-        onConnect: { addListener: () => {}, removeListener: () => {} },
-      }
-    }
-
-    // ---- 3. 修复 permissions.query（headless 下返回异常结果） ----
-    // 正常浏览器对 notifications 权限的查询应返回当前通知权限状态
-    const originalPermissionsQuery = window.navigator.permissions.query.bind(
-      window.navigator.permissions,
-    )
-    window.navigator.permissions.query = (parameters: PermissionDescriptor) => {
-      if (parameters.name === 'notifications') {
-        return Promise.resolve({
-          state: Notification.permission,
-          name: 'notifications',
-          onchange: null,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          dispatchEvent: () => true,
-        } as PermissionStatus)
-      }
-      return originalPermissionsQuery(parameters)
-    }
-
-    // ---- 4. 修复 navigator.plugins（headless 下为空，会被检测到） ----
-    // 真实 Chrome 含有 PDF Viewer 等内置插件
-    const fakePlugins = [
-      { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: '' },
-      { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-      {
-        name: 'Native Client',
-        filename: 'internal-nacl-plugin',
-        description: 'Native Client',
-      },
-    ]
-    Object.defineProperty(navigator, 'plugins', {
-      get: () => {
-        const arr = Object.assign([], fakePlugins) as unknown as PluginArray
-        ;(arr as unknown as { refresh: () => void }).refresh = () => {}
-        return arr
-      },
-      configurable: true,
-    })
-
-    // ---- 5. 修复 navigator.languages（headless 下可能为空或异常） ----
-    Object.defineProperty(navigator, 'languages', {
-      get: () => ['zh-CN', 'zh', 'en-US', 'en'],
-      configurable: true,
-    })
-
-    // ---- 6. 修复 navigator.platform（headless 有时返回空字符串） ----
-    // 使用 as unknown as string 绕过 TS 的字面量枚举检查（运行时实际值可能为空）
-    const currentPlatform = navigator.platform as unknown as string
-    if (!currentPlatform || currentPlatform === '') {
-      Object.defineProperty(navigator, 'platform', {
-        get: () => 'MacIntel',
+  await context.addInitScript(
+    ({ platform }) => {
+      // ---- 1. 覆盖 navigator.webdriver（最关键的检测点） ----
+      // 自动化浏览器下此属性为 true，正常浏览器为 undefined
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
         configurable: true,
       })
-    }
 
-    // ---- 7. 覆盖 toString 防止函数原生性检测 ----
-    // 某些检测脚本会检查 navigator.webdriver.toString() 等来判断是否被覆盖
-    // 通过让覆盖的函数看起来像原生函数来规避
-    const nativeToString = Function.prototype.toString
-    Function.prototype.toString = function (this: Function) {
-      if (this === window.navigator.permissions.query) {
-        return 'function query() { [native code] }'
+      // ---- 2. 模拟 window.chrome.runtime（非 headless 的 Chrome 应有此对象） ----
+      const win = window as unknown as Window & { chrome?: Record<string, unknown> }
+      if (!win.chrome) {
+        win.chrome = {}
       }
-      return nativeToString.call(this)
-    }
-  })
+      const chrome = win.chrome
+      if (!chrome['runtime']) {
+        chrome['runtime'] = {
+          // 模拟最常被检测的属性
+          connect: () => {},
+          sendMessage: () => {},
+          id: undefined,
+          onMessage: { addListener: () => {}, removeListener: () => {} },
+          onConnect: { addListener: () => {}, removeListener: () => {} },
+        }
+      }
+
+      // ---- 3. 修复 permissions.query（headless 下返回异常结果） ----
+      // 正常浏览器对 notifications 权限的查询应返回当前通知权限状态
+      const originalPermissionsQuery = window.navigator.permissions.query.bind(
+        window.navigator.permissions,
+      )
+      window.navigator.permissions.query = (parameters: PermissionDescriptor) => {
+        if (parameters.name === 'notifications') {
+          return Promise.resolve({
+            state: Notification.permission,
+            name: 'notifications',
+            onchange: null,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: () => true,
+          } as PermissionStatus)
+        }
+        return originalPermissionsQuery(parameters)
+      }
+
+      // ---- 4. 修复 navigator.plugins（headless 下为空，会被检测到） ----
+      // 真实 Chrome 含有 PDF Viewer 等内置插件
+      const fakePlugins = [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: '' },
+        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+        {
+          name: 'Native Client',
+          filename: 'internal-nacl-plugin',
+          description: 'Native Client',
+        },
+      ]
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => {
+          const arr = Object.assign([], fakePlugins) as unknown as PluginArray
+          ;(arr as unknown as { refresh: () => void }).refresh = () => {}
+          return arr
+        },
+        configurable: true,
+      })
+
+      // ---- 5. 修复 navigator.languages（headless 下可能为空或异常） ----
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['zh-CN', 'zh', 'en-US', 'en'],
+        configurable: true,
+      })
+
+      // ---- 6. 修复 navigator.platform（headless 有时返回空字符串） ----
+      // 使用 as unknown as string 绕过 TS 的字面量枚举检查（运行时实际值可能为空）
+      const currentPlatform = navigator.platform as unknown as string
+      if (!currentPlatform || currentPlatform === '') {
+        Object.defineProperty(navigator, 'platform', {
+          get: () => platform,
+          configurable: true,
+        })
+      }
+
+      // ---- 7. 覆盖 toString 防止函数原生性检测 ----
+      // 某些检测脚本会检查 navigator.webdriver.toString() 等来判断是否被覆盖
+      // 通过让覆盖的函数看起来像原生函数来规避
+      const nativeToString = Function.prototype.toString
+      Function.prototype.toString = function (this: Function) {
+        if (this === window.navigator.permissions.query) {
+          return 'function query() { [native code] }'
+        }
+        return nativeToString.call(this)
+      }
+    },
+    { platform: runtimePlatform },
+  )
 }

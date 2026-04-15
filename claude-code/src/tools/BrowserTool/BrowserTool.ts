@@ -21,11 +21,16 @@ import {
 export const BROWSER_ACTIONS = [
   'navigate',
   'click',
+  'smart_click',
   'fill',
+  'smart_type',
   'screenshot',
   'extract',
+  'observe',
+  'perceive',
   'evaluate',
   'wait_for',
+  'wait_for_selector',
   'upload_file',
   'get_text',
   'hover',
@@ -38,10 +43,12 @@ export const BROWSER_ACTIONS = [
 
 export type BrowserAction = (typeof BROWSER_ACTIONS)[number]
 
-/** Actions that do not mutate page state */
+/** Actions that do not mutate page state（包含旧 Skill 的别名） */
 const READ_ONLY_ACTIONS: ReadonlySet<BrowserAction> = new Set([
   'screenshot',
   'extract',
+  'observe',
+  'perceive',
   'get_text',
 ])
 
@@ -85,6 +92,10 @@ const inputSchema = lazySchema(() =>
       .boolean()
       .optional()
       .describe('Capture full page screenshot (default: false)'),
+    profile: z
+      .string()
+      .optional()
+      .describe('Browser profile identifier for multi-tenant / multi-account isolation (e.g. company name)'),
   }),
 )
 type InputSchema = ReturnType<typeof inputSchema>
@@ -122,11 +133,21 @@ export const BrowserTool = buildTool({
   },
 
   async description(input) {
-    const { action, url, selector } = input as {
+    const { action: rawAction, url, selector } = input as {
       action?: string
       url?: string
       selector?: string
     }
+    const action =
+      rawAction === 'smart_click'
+        ? 'click'
+        : rawAction === 'smart_type'
+          ? 'fill'
+          : rawAction === 'wait_for_selector'
+            ? 'wait_for'
+            : rawAction === 'observe' || rawAction === 'perceive'
+              ? 'extract'
+              : rawAction
     switch (action) {
       case 'navigate':
         return url
@@ -182,11 +203,21 @@ export const BrowserTool = buildTool({
   getToolUseSummary,
 
   getActivityDescription(input) {
-    const { action, url, selector } = (input ?? {}) as {
+    const { action: rawAction, url, selector } = (input ?? {}) as {
       action?: string
       url?: string
       selector?: string
     }
+    const action =
+      rawAction === 'smart_click'
+        ? 'click'
+        : rawAction === 'smart_type'
+          ? 'fill'
+          : rawAction === 'wait_for_selector'
+            ? 'wait_for'
+            : rawAction === 'observe' || rawAction === 'perceive'
+              ? 'extract'
+              : rawAction
     switch (action) {
       case 'navigate':
         return url ? `Navigating to ${url}` : 'Navigating...'
@@ -232,7 +263,17 @@ export const BrowserTool = buildTool({
   },
 
   toAutoClassifierInput(input) {
-    const { action, url, selector } = input
+    const { action: rawAction, url, selector } = input
+    const action =
+      rawAction === 'smart_click'
+        ? 'click'
+        : rawAction === 'smart_type'
+          ? 'fill'
+          : rawAction === 'wait_for_selector'
+            ? 'wait_for'
+            : rawAction === 'observe' || rawAction === 'perceive'
+              ? 'extract'
+              : rawAction
     const parts: string[] = [action]
     if (url) parts.push(url)
     if (selector) parts.push(selector)
@@ -241,7 +282,20 @@ export const BrowserTool = buildTool({
 
   async validateInput(input) {
     const { action, url, selector, text, file_path, script } = input
-    switch (action) {
+    const raw = input as Record<string, unknown>
+    // 兼容旧 Skill 中的 action 别名
+    const effectiveAction =
+      action === 'smart_click'
+        ? 'click'
+        : action === 'smart_type'
+          ? 'fill'
+          : action === 'wait_for_selector'
+            ? 'wait_for'
+            : action === 'observe' || action === 'perceive'
+              ? 'extract'
+              : action
+
+    switch (effectiveAction) {
       case 'navigate':
         if (!url) return { result: false as const, message: 'navigate action requires "url" parameter', errorCode: 1 }
         break
@@ -250,10 +304,14 @@ export const BrowserTool = buildTool({
       case 'check_checkbox':
       case 'wait_for':
       case 'get_text':
-        if (!selector) return { result: false as const, message: `${action} action requires "selector" parameter`, errorCode: 1 }
+        if (!selector && !(action === 'smart_click' && raw['target'])) {
+          return { result: false as const, message: `${action} action requires "selector" parameter`, errorCode: 1 }
+        }
         break
       case 'fill':
-        if (!selector || !text) return { result: false as const, message: 'fill action requires "selector" and "text" parameters', errorCode: 1 }
+        if ((!selector && !(action === 'smart_type' && raw['target'])) || !text) {
+          return { result: false as const, message: 'fill action requires "selector" and "text" parameters', errorCode: 1 }
+        }
         break
       case 'upload_file':
         if (!selector || !file_path) return { result: false as const, message: 'upload_file action requires "selector" and "file_path" parameters', errorCode: 1 }
@@ -324,13 +382,38 @@ export const BrowserTool = buildTool({
   renderToolResultMessage,
 
   async call(input, context) {
-    const { action, url, selector, text, file_path, script, timeout, full_page } = input
+    let { action, url, selector, text, file_path, script, timeout, full_page, profile } = input
     const sessionId: string = context.agentId ?? 'default'
+    const profileId: string = profile ?? 'default'
+
+    // 兼容旧 Skill 中的 action 别名和参数名
+    const normalizedAction = ((): typeof action => {
+      if (action === 'smart_click') return 'click'
+      if (action === 'smart_type') return 'fill'
+      if (action === 'wait_for_selector') return 'wait_for'
+      if (action === 'observe' || action === 'perceive') return 'extract'
+      return action
+    })()
+    action = normalizedAction
+
+    // 兼容旧参数名映射
+    const raw = input as Record<string, unknown>
+    if (action === 'click' || action === 'fill' || action === 'wait_for') {
+      if (!selector && raw['target']) {
+        selector = String(raw['target'])
+      }
+    }
+    if (action === 'fill' && !text && raw['value']) {
+      text = String(raw['value'])
+    }
+    if (action === 'wait_for' && !timeout && raw['timeout_ms']) {
+      timeout = Number(raw['timeout_ms'])
+    }
 
     let result: Output
 
     try {
-      const page = await browserPool.getPage(sessionId)
+      const page = await browserPool.getPage(sessionId, profileId)
 
       if (timeout) {
         page.setDefaultTimeout(timeout)
@@ -446,10 +529,10 @@ export const BrowserTool = buildTool({
         }
 
         default: {
-          const _exhaustive: never = action
+          const unknownAction = action as string
           result = {
             success: false,
-            error: `Unknown action: ${String(_exhaustive)}`,
+            error: `Unknown action: ${unknownAction}`,
           }
         }
       }
