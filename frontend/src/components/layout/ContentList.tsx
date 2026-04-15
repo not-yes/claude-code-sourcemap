@@ -388,7 +388,7 @@ export function ContentList() {
     { id: "notifications", label: "通知设置" },
     { id: "env", label: "环境变量" },
     { id: "advanced", label: "高级设置" },
-    { id: "config-files", label: "配置文件" },
+    { id: "sync-config", label: "配置同步" },
   ];
 
   const filteredAgents = search

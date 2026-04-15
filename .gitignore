@@ -45,3 +45,6 @@ package/.DS_Store
 
 # Git worktrees
 .worktrees/
+
+# Config sync hub (独立 Git 仓库)
+config-sync-hub/

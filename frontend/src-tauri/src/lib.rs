@@ -1,5 +1,6 @@
 mod agent;
 mod plugins;
+mod sync;
 
 use agent::AgentManager;
 use plugins::mac_rounded_corners;
@@ -442,6 +443,8 @@ pub fn run() {
       select_directory,
       get_claude_config,
       save_claude_config,
+      sync::sync_config_pull,
+      sync::sync_config_push,
     ])
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {

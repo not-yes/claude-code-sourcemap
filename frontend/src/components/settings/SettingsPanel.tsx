@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { checkIsTauri } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -31,12 +30,7 @@ import * as TOML from "@iarna/toml";
 import { useAppStore } from "@/stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
 import { getClaudeConfig, saveClaudeConfig } from "@/api/tauri-api";
-
-const CLAUDE_PATHS: Record<string, string> = {
-  config: "~/.claude/config.toml",
-  agents: "~/.claude/agents/",
-  skills: "~/.claude/skills/",
-};
+import { ConfigSyncPanel } from "./ConfigSyncPanel";
 
 type SettingsCategory =
   | "model-api"
@@ -45,7 +39,7 @@ type SettingsCategory =
   | "notifications"
   | "env"
   | "advanced"
-  | "config-files";
+  | "sync-config";
 
 function SectionHeader({
   icon: Icon,
@@ -131,7 +125,6 @@ export function SettingsPanel() {
   const [editedContent, setEditedContent] = useState("");
   const [configContent, setConfigContent] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [isTauri, setIsTauri] = useState(false);
 
   // 各分类保存成功反馈
@@ -229,13 +222,12 @@ export function SettingsPanel() {
     if (!checkIsTauri()) return;
     const content = newContent ?? editedContent;
     setSaving(true);
-    setSaveError(null);
     try {
       await saveClaudeConfig("config", content);
       setConfigContent(content);
       setEditedContent(content);
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "保存失败");
+      console.error("保存配置失败:", e);
     } finally {
       setSaving(false);
     }
@@ -927,55 +919,9 @@ export function SettingsPanel() {
         </div>
       )}
 
-      {/* ── 配置文件 ─────────────────────────────────────────────── */}
-      {selectedCategory === "config-files" && (
-        <>
-          {/* 路径信息 */}
-          <div className="border-b p-4 space-y-4">
-            <SectionHeader icon={FileCode} title="路径信息" />
-            <div className="space-y-3">
-              {Object.entries(CLAUDE_PATHS).map(([key, path]) => (
-                <div key={key}>
-                  <label className="text-sm text-muted-foreground">{key}</label>
-                  <div className="rounded-md bg-muted/50 px-3 py-2 font-mono text-sm mt-1">
-                    {path}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          {/* config.toml 完整编辑 */}
-          {configContent !== null && (
-            <div className="border-b p-4">
-              <SectionHeader
-                icon={FileCode}
-                title="config.toml 完整编辑"
-                action={
-                  isTauri && (
-                    <Button
-                      size="sm"
-                      onClick={() => void saveConfig(editedContent)}
-                      disabled={saving || editedContent === configContent}
-                    >
-                      {saving ? "保存中..." : "保存"}
-                    </Button>
-                  )
-                }
-              />
-              <Textarea
-                value={editedContent}
-                onChange={(e) => setEditedContent(e.target.value)}
-                className="font-mono text-sm h-96"
-                readOnly={!isTauri}
-              />
-              {saveError && (
-                <p className="text-sm text-destructive mt-2">{saveError}</p>
-              )}
-            </div>
-          )}
-        </>
-      )}
+      {/* ── 配置同步 ─────────────────────────────────────────────── */}
+      {selectedCategory === "sync-config" && <ConfigSyncPanel />}
 
       {/* 解析失败提示 */}
       {(
