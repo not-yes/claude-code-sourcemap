@@ -8,11 +8,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { PermissionRequest, PermissionDecision } from "@/stores/permissionStore";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
 
 /** 权限请求超时时间（毫秒），超时后自动拒绝 */
-const PERMISSION_TIMEOUT_MS = 290_000;
+const PERMISSION_TIMEOUT_MS = 600_000;
 
 interface PlanApprovalDialogProps {
   request: PermissionRequest | null;
@@ -38,7 +39,7 @@ function extractPlanText(request: PermissionRequest): string {
  *
  * 当 Sidecar ExitPlanMode 工具触发权限请求时展示，
  * 支持预览/编辑计划内容，并允许批准或拒绝执行。
- * 超过 290s 未响应时自动拒绝。
+ * 超过 600s 未响应时自动拒绝。
  */
 export function PlanApprovalDialog({ request, onDecision }: PlanApprovalDialogProps) {
   const isOpen = request !== null;
@@ -54,6 +55,9 @@ export function PlanApprovalDialog({ request, onDecision }: PlanApprovalDialogPr
   // 超时定时器
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 倒计时剩余秒数
+  const [remainingSeconds, setRemainingSeconds] = useState(PERMISSION_TIMEOUT_MS / 1000);
+
   // 每次 request 变更时重置状态并初始化计划文本
   useEffect(() => {
     if (!request) return;
@@ -62,6 +66,7 @@ export function PlanApprovalDialog({ request, onDecision }: PlanApprovalDialogPr
     setIsEditMode(false);
     setShowDenyReason(false);
     setDenyReason("");
+    toast.info("收到计划审批请求，请查看并确认", { duration: 10000 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.requestId]);
 
@@ -76,11 +81,24 @@ export function PlanApprovalDialog({ request, onDecision }: PlanApprovalDialogPr
     };
   }, [isOpen, request, onDecision]);
 
+  // 倒计时更新
+  useEffect(() => {
+    if (!isOpen) return;
+    setRemainingSeconds(PERMISSION_TIMEOUT_MS / 1000);
+    const interval = setInterval(() => {
+      setRemainingSeconds(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isOpen, request?.requestId]);
+
   const handleApprove = () => {
     if (!request) return;
     onDecision(request.requestId, {
       granted: true,
       updatedInput: { plan: editedPlan },
+      permissionUpdates: [
+        { type: 'setMode', mode: 'default', destination: 'session' },
+      ],
     });
   };
 
@@ -206,7 +224,13 @@ export function PlanApprovalDialog({ request, onDecision }: PlanApprovalDialogPr
           )}
         </div>
 
-        <DialogFooter className="flex-col sm:flex-row gap-2 pt-2">
+        <DialogFooter className="flex-col sm:flex-row gap-2 pt-2 items-center">
+          {/* 超时倒计时提示 */}
+          <span className="text-xs text-muted-foreground mr-auto">
+            {remainingSeconds > 60
+              ? `${Math.ceil(remainingSeconds / 60)} 分钟后自动拒绝`
+              : `${remainingSeconds} 秒后自动拒绝`}
+          </span>
           {/* 拒绝按钮 */}
           <Button
             variant="outline"

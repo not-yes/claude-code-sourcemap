@@ -3,6 +3,7 @@ import { Brain, Wrench, XCircle, CheckCircle2, AlertCircle, AlertTriangle, Info,
 import { cn } from "@/lib/utils";
 import type { Message, MessageContentBlock, TokenUsage } from "@/types";
 import { MarkdownContent } from "./MarkdownContent";
+import { TaskResultCard } from "./TaskResultCard";
 import { toast } from "sonner";
 
 interface MessageBubbleProps {
@@ -81,6 +82,12 @@ const getFileType = (filePath: string): 'text' | 'document' | 'image' | 'unknown
 };
 
 function ToolResultBlock({ block }: { block: Extract<MessageContentBlock, { type: 'tool_result' }> }) {
+  // Task 系列工具使用专用卡片渲染
+  const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TodoWrite', 'Task', 'task']);
+  if (block.toolName && TASK_TOOL_NAMES.has(block.toolName)) {
+    return <TaskResultCard result={block.result} />;
+  }
+
   const fileType = block.filePath ? getFileType(block.filePath) : 'unknown';
 
   // 根据文件类型选择图标

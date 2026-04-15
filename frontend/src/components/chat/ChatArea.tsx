@@ -289,10 +289,12 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     const eventName = buildAgentEventName(agentId, "permission-request");
     listen(eventName, (event) => {
       const req = event.payload as Parameters<typeof setPendingRequest>[0];
+      console.warn(`[ChatArea:permission] 收到权限请求: tool=${req?.tool}, requestId=${req?.requestId}, agentId=${agentId}`);
       if (!req) return;
 
       const remembered = usePermissionStore.getState().getRememberedDecision(req.tool);
-      if (remembered !== undefined) {
+      // ExitPlanMode 和 AskUserQuestion 每次都需要用户确认，不使用记住的决策
+      if (remembered !== undefined && req.tool !== "ExitPlanMode" && req.tool !== "AskUserQuestion") {
         invoke("agent_permission_response", {
           requestId: req.requestId,
           decision: { granted: remembered },
@@ -478,6 +480,11 @@ export function ChatArea({ agentId }: ChatAreaProps) {
               const blocks: MessageContentBlock[] = [...(m.contentBlocks || [])];
               let completionUsage: TokenUsage | undefined;
 
+              // 辅助函数：清理临时 heartbeat system block
+              const removeHeartbeatBlocks = () => {
+                return blocks.filter(b => !(b.type === 'system' && b.content === '正在分析问题，请稍候...'));
+              };
+
               switch (event.type) {
                 case 'text': {
                   const textEvent = event as { type: 'text'; content: string; isThinking?: boolean };
@@ -486,7 +493,10 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                     responseSizeRef.current += textEvent.content.length;
                     if (responseSizeRef.current > MAX_RESPONSE_SIZE) {
                       responseTruncatedRef.current = true;
-                      blocks.push({ type: 'text', content: '\n\n[内容已截断]' });
+                      const cleaned = removeHeartbeatBlocks();
+                      cleaned.push({ type: 'text', content: '\n\n[内容已截断]' });
+                      blocks.length = 0;
+                      blocks.push(...cleaned);
                       break;
                     }
                   } else {
@@ -494,34 +504,47 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                   }
                   if (textEvent.isThinking) {
                     if (!textEvent.content) break;
-                    const lastBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+                    const cleaned = removeHeartbeatBlocks();
+                    const lastBlock = cleaned.length > 0 ? cleaned[cleaned.length - 1] : null;
                     if (lastBlock && lastBlock.type === 'thinking') {
-                      blocks[blocks.length - 1] = { ...lastBlock, content: lastBlock.content + textEvent.content };
+                      cleaned[cleaned.length - 1] = { ...lastBlock, content: lastBlock.content + textEvent.content };
                     } else {
-                      blocks.push({ type: 'thinking', content: textEvent.content });
+                      cleaned.push({ type: 'thinking', content: textEvent.content });
                     }
+                    // 写回 blocks（通过清空+push 保持引用更新）
+                    blocks.length = 0;
+                    blocks.push(...cleaned);
                   } else {
-                    const lastBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+                    const cleaned = removeHeartbeatBlocks();
+                    const lastBlock = cleaned.length > 0 ? cleaned[cleaned.length - 1] : null;
                     if (lastBlock && lastBlock.type === 'text') {
-                      blocks[blocks.length - 1] = { ...lastBlock, content: lastBlock.content + textEvent.content };
+                      cleaned[cleaned.length - 1] = { ...lastBlock, content: lastBlock.content + textEvent.content };
                     } else {
                       console.log(`[ChatArea] Adding new text block: ${textEvent.content.substring(0, 50)}...`);
-                      blocks.push({ type: 'text', content: textEvent.content });
+                      cleaned.push({ type: 'text', content: textEvent.content });
                     }
+                    blocks.length = 0;
+                    blocks.push(...cleaned);
                   }
                   break;
                 }
                 case 'tool_use': {
                   const tuEvent = event as { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
                   if (blocks.length < MAX_CONTENT_BLOCKS) {
-                    blocks.push({ type: 'tool_use', id: tuEvent.id, name: tuEvent.name, input: tuEvent.input || {} });
+                    const cleaned = removeHeartbeatBlocks();
+                    cleaned.push({ type: 'tool_use', id: tuEvent.id, name: tuEvent.name, input: tuEvent.input || {} });
+                    blocks.length = 0;
+                    blocks.push(...cleaned);
                   }
                   break;
                 }
                 case 'tool_result': {
                   const trEvent = event as { type: 'tool_result'; id: string; toolName: string; result: unknown; isError?: boolean; filePath?: string };
                   if (blocks.length < MAX_CONTENT_BLOCKS) {
-                    blocks.push({ type: 'tool_result', toolId: trEvent.id, toolName: trEvent.toolName, result: trEvent.result, isError: trEvent.isError, filePath: trEvent.filePath });
+                    const cleaned = removeHeartbeatBlocks();
+                    cleaned.push({ type: 'tool_result', toolId: trEvent.id, toolName: trEvent.toolName, result: trEvent.result, isError: trEvent.isError, filePath: trEvent.filePath });
+                    blocks.length = 0;
+                    blocks.push(...cleaned);
                   }
                   break;
                 }
@@ -546,6 +569,10 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                       setActiveBackendSessionId(completeEvent.sessionId);
                     }
                   }
+                  // 完成时移除 heartbeat
+                  const cleaned = removeHeartbeatBlocks();
+                  blocks.length = 0;
+                  blocks.push(...cleaned);
                   // 检查是否有 text 内容，如果没有，添加提示
                   const hasTextBlock = blocks.some(b => b.type === 'text');
                   const hasThinkingBlock = blocks.some(b => b.type === 'thinking');
@@ -884,6 +911,13 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             <StopCircle className="h-3.5 w-3.5" />
             中止
           </button>
+        </div>
+      )}
+      {pendingRequest?.tool === "ExitPlanMode" && (
+        <div className="flex items-center justify-center gap-2 px-4 py-2 bg-purple-50 dark:bg-purple-950/20 border-t border-purple-200 dark:border-purple-800">
+          <span className="text-sm text-purple-700 dark:text-purple-300 font-medium">
+            计划等待审批中，请在弹窗中查看并确认
+          </span>
         </div>
       )}
       <InputArea onSend={handleSend} disabled={loading} loading={loading} onStop={handleStop} />
