@@ -440,16 +440,41 @@ impl IpcBridge {
                             event.get("content").and_then(|c| c.as_str()).map(|s| if s.len() > 50 { format!("{}...", safe_truncate(s, 50)) } else { s.to_string() }).unwrap_or_default()
                         };
                         log::info!("IpcBridge: 收到流式事件 executeId={} type={} content={}", eid, event_type, content_preview);
-                        // 使用 try_send 非阻塞发送，避免缓冲区满时阻塞 reader task
-                        match entry.tx.try_send(event) {
-                            Ok(_) => { /* 正常发送 */ }
-                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                log::warn!("[IpcBridge] 流式事件缓冲区已满，丢弃事件 executeId={}", eid);
-                                // 不阻塞 reader，丢弃此事件
+                        
+                        // 关键事件 (error/complete) 使用阻塞发送，确保不丢失
+                        // 普通事件使用 try_send 避免阻塞 reader task
+                        let is_critical = event_type == "error" || event_type == "complete";
+                        
+                        if is_critical {
+                            // 阻塞发送关键事件（带超时保护）
+                            let send_result = tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                entry.tx.send(event),
+                            ).await;
+                            
+                            match send_result {
+                                Ok(Ok(())) => { /* 正常发送 */ }
+                                Ok(Err(_)) => {
+                                    log::warn!("[IpcBridge] 关键事件 channel 已关闭，清理 executeId={}", eid);
+                                    streams.remove(&eid);
+                                }
+                                Err(_) => {
+                                    log::error!("[IpcBridge] 关键事件发送超时 (5s) executeId={}", eid);
+                                    streams.remove(&eid);
+                                }
                             }
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                log::warn!("[IpcBridge] 流式 channel 已关闭，清理 executeId={}", eid);
-                                streams.remove(&eid);
+                        } else {
+                            // 非关键事件使用 try_send，避免阻塞 reader
+                            match entry.tx.try_send(event) {
+                                Ok(_) => { /* 正常发送 */ }
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                    log::warn!("[IpcBridge] 流式事件缓冲区已满，丢弃事件 executeId={}", eid);
+                                    // 不阻塞 reader，丢弃此事件
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                    log::warn!("[IpcBridge] 流式 channel 已关闭，清理 executeId={}", eid);
+                                    streams.remove(&eid);
+                                }
                             }
                         }
                     } else {

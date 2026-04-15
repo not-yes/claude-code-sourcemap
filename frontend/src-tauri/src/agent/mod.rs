@@ -14,8 +14,8 @@ use process::{resolve_sidecar_path, AgentProcess};
 
 /// 单个 Agent 实例的运行时状态
 struct AgentInstance {
-    /// 子进程句柄
-    process: AgentProcess,
+    /// 子进程句柄（Arc<Mutex> 共享，供 writer task 直接引用）
+    process: Arc<tokio::sync::Mutex<AgentProcess>>,
     /// stdin writer channel sender
     write_tx: mpsc::Sender<String>,
     /// IPC 通信桥接器
@@ -44,6 +44,8 @@ pub struct AgentManager {
     idle_monitor_started: Arc<AtomicBool>,
     /// 启动串行化锁：确保并发检查+启动为原子操作，消除 TOCTOU 竞态条件
     start_lock: Mutex<()>,
+    /// 后台任务退出信号（stop_all 时触发）
+    shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 }
 
 /// 返回最大并发 Agent 数量（默认 5，可通过环境变量 MAX_CONCURRENT_AGENTS 覆盖）
@@ -59,22 +61,38 @@ impl AgentManager {
     pub fn new() -> Self {
         let mut config = LifecycleConfig::default();
         config.start_timeout_ms = 30_000; // 30秒超时
+        let (shutdown_tx, _) = tokio::sync::oneshot::channel();
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             app_handle: Arc::new(RwLock::new(None)),
             lifecycle_config: config,
             idle_monitor_started: Arc::new(AtomicBool::new(false)),
             start_lock: Mutex::new(()),
+            shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         }
     }
 
     /// 启动空闲监控任务（每 60 秒检查一次，5 分钟无活动自动回收）
-    fn start_idle_monitor(agents: Arc<RwLock<HashMap<String, AgentInstance>>>) {
+    fn start_idle_monitor(
+        agents: Arc<RwLock<HashMap<String, AgentInstance>>>,
+        mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    ) {
         tokio::spawn(async move {
             let idle_timeout = std::time::Duration::from_secs(300); // 5分钟
 
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                // 使用 select! 监听退出信号或定时器
+                tokio::select! {
+                    // 收到退出信号，立即退出
+                    _ = &mut shutdown_rx => {
+                        log::info!("AgentManager: 空闲监控任务收到退出信号，停止运行");
+                        break;
+                    }
+                    // 定时器触发，执行清理检查
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {
+                        // 继续执行下方清理逻辑
+                    }
+                }
 
                 // 阶段1: read lock 收集超时 agent 列表
                 let to_remove = {
@@ -140,7 +158,13 @@ impl AgentManager {
     ) -> anyhow::Result<()> {
         // Lazy 启动空闲监控：首次 start_agent 调用时（Tokio runtime 已就绪）启动
         if !self.idle_monitor_started.swap(true, Ordering::SeqCst) {
-            Self::start_idle_monitor(Arc::clone(&self.agents));
+            // 创建新的 shutdown channel，将 receiver 传给监控任务
+            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+            {
+                let mut guard = self.shutdown_tx.lock().await;
+                *guard = Some(shutdown_tx);
+            }
+            Self::start_idle_monitor(Arc::clone(&self.agents), shutdown_rx);
         }
 
         // 保存 app_handle（供后续操作使用）
@@ -149,19 +173,23 @@ impl AgentManager {
             *handle_guard = Some(app_handle.clone());
         }
 
-        // 获取启动串行化锁，防止 TOCTOU 竞态：确保并发检查+启动为原子操作
-        // guard 在整个 start_agent 方法（包括 eviction 和 do_start_agent）期间保持持有
-        let _start_guard = self.start_lock.lock().await;
-
-        // 幂等检查 + 并发限制检查
-        {
+        // 阶段1: 获取启动串行化锁，仅用于保护检查+evict 的原子性
+        // 锁在检查完成后立即释放，不阻塞 do_start_agent 的长时间等待
+        enum StartAction {
+            AlreadyRunning,
+            NeedEvict,
+            CanStart,
+        }
+        
+        let action = {
+            let _start_guard = self.start_lock.lock().await;
+            
+            // 幂等检查 + 并发限制检查
             let agents = self.agents.read().await;
             if agents.contains_key(agent_id) {
                 log::info!("AgentManager: agent {} 已在运行，跳过启动", agent_id);
-                return Ok(());
-            }
-            // 检查并发限制（"main" agent 不受限制）
-            if agent_id != "main" && agents.len() >= max_concurrent_agents() {
+                StartAction::AlreadyRunning
+            } else if agent_id != "main" && agents.len() >= max_concurrent_agents() {
                 drop(agents);
                 let max = max_concurrent_agents();
                 log::warn!("AgentManager: 达到并发上限 {}，尝试回收最久未用 Agent", max);
@@ -187,10 +215,19 @@ impl AgentManager {
                         max
                     ));
                 }
+                StartAction::NeedEvict
+            } else {
+                StartAction::CanStart
+            }
+        }; // start_lock 在此释放，不阻塞 do_start_agent
+        
+        // 阶段2: 在锁外执行实际启动（包含等待 $/ready，最长30秒）
+        match action {
+            StartAction::AlreadyRunning => Ok(()),
+            StartAction::NeedEvict | StartAction::CanStart => {
+                self.do_start_agent(agent_id, cwd, app_handle).await
             }
         }
-
-        self.do_start_agent(agent_id, cwd, app_handle).await
     }
 
     /// 回收最久未使用的 agent（排除 main）
@@ -351,8 +388,9 @@ impl AgentManager {
 
         // 10. 构建 AgentInstance 并原子插入 HashMap
         let last_activity = Arc::new(RwLock::new(Instant::now()));
+        let process_arc = Arc::new(tokio::sync::Mutex::new(agent_proc));
         let instance = AgentInstance {
-            process: agent_proc,
+            process: Arc::clone(&process_arc),
             write_tx: write_tx_clone,
             ipc: Arc::clone(&ipc),
             cwd: cwd.to_string(),
@@ -376,7 +414,7 @@ impl AgentManager {
         }
 
         // 11. 启动 stdin writer task（在 instance 插入后启动）
-        let agents_for_writer = Arc::clone(&self.agents);
+        // 重构：直接持有 process Arc，无需每次查 HashMap 获取写锁
         let writer_agent_id = agent_id_str.clone();
         tokio::spawn(async move {
             let mut msg_count = 0u64;
@@ -386,22 +424,17 @@ impl AgentManager {
                     let preview: String = line.chars().take(100).collect();
                     process::debug_log(&format!("[stdin-writer][{}] #{} writing: {}", writer_agent_id, msg_count, preview));
                 }
-                let mut agents = agents_for_writer.write().await;
-                if let Some(inst) = agents.get_mut(&writer_agent_id) {
-                    let write_start = std::time::Instant::now();
-                    if let Err(e) = inst.process.write_line(&line).await {
-                        process::debug_log(&format!("[stdin-writer][{}] #{} FAILED: {}", writer_agent_id, msg_count, e));
-                        log::error!("AgentManager: agent={} 写入 stdin 失败: {}", writer_agent_id, e);
-                        break;
-                    }
-                    let elapsed = write_start.elapsed();
-                    if elapsed.as_millis() > 100 {
-                        process::debug_log(&format!("[stdin-writer][{}] #{} SLOW write: {}ms", writer_agent_id, msg_count, elapsed.as_millis()));
-                    }
-                } else {
-                    process::debug_log(&format!("[stdin-writer][{}] #{} agent stopped, discarding", writer_agent_id, msg_count));
-                    log::warn!("AgentManager: agent={} 已停止，丢弃消息", writer_agent_id);
+                // 直接锁定 process，无需查 HashMap
+                let mut proc_guard = process_arc.lock().await;
+                let write_start = std::time::Instant::now();
+                if let Err(e) = proc_guard.write_line(&line).await {
+                    process::debug_log(&format!("[stdin-writer][{}] #{} FAILED: {}", writer_agent_id, msg_count, e));
+                    log::error!("AgentManager: agent={} 写入 stdin 失败: {}", writer_agent_id, e);
                     break;
+                }
+                let elapsed = write_start.elapsed();
+                if elapsed.as_millis() > 100 {
+                    process::debug_log(&format!("[stdin-writer][{}] #{} SLOW write: {}ms", writer_agent_id, msg_count, elapsed.as_millis()));
                 }
             }
             log::info!("AgentManager: agent={} stdin writer task 退出", writer_agent_id);
@@ -428,9 +461,10 @@ impl AgentManager {
             // 阶段2：在 lock 释放后执行 graceful_shutdown（加 3 秒整体超时兜底）
             // 即使 shutdown 卡住，也不会阻塞其他 agent 操作
             let write_tx = inst.write_tx.clone();
+            let mut process_guard = inst.process.lock().await;
             let shutdown_result = tokio::time::timeout(
                 std::time::Duration::from_secs(3),
-                inst.lifecycle.graceful_shutdown(&mut inst.process, &write_tx),
+                inst.lifecycle.graceful_shutdown(&mut process_guard, &write_tx),
             ).await;
             match shutdown_result {
                 Ok(Ok(())) => {
@@ -474,6 +508,15 @@ impl AgentManager {
 
     /// 停止所有运行中的 Agent 实例
     pub async fn stop_all(&self) -> anyhow::Result<()> {
+        // 触发后台任务退出信号
+        {
+            let mut guard = self.shutdown_tx.lock().await;
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+                log::info!("AgentManager: 已发送退出信号给后台任务");
+            }
+        }
+        
         let agent_ids: Vec<String> = {
             let agents = self.agents.read().await;
             agents.keys().cloned().collect()
