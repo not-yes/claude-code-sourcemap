@@ -83,8 +83,10 @@ function App() {
             });
             console.info(`[App] No working directories configured, set default: ${defaultWorkspace}`);
           }
-          // 同步更新 appStore
-          useAppStore.getState().setWorkingDirectories([resolvedDefaultCwd]);
+          // Only set if currently empty (persist might have restored a value)
+          if (useAppStore.getState().workingDirectories.length === 0) {
+            useAppStore.getState().setWorkingDirectories([resolvedDefaultCwd]);
+          }
         } else {
           // 使用第一个工作目录作为默认激活目录
           resolvedDefaultCwd = workingDirs[0];
@@ -94,8 +96,10 @@ function App() {
               workingDirs.slice(1).map((d, i) => `  [${i + 2}] ${d}`).join('\n')
             );
           }
-          // 同步更新 appStore
-          useAppStore.getState().setWorkingDirectories(workingDirs);
+          // Only set if currently empty (persist might have restored a value)
+          if (useAppStore.getState().workingDirectories.length === 0) {
+            useAppStore.getState().setWorkingDirectories(workingDirs);
+          }
         }
 
         // 4. 优先使用 per-agent 已保存的工作目录（来自 agentWorkingDirectory["main"]），

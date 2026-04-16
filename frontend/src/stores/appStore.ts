@@ -236,13 +236,14 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: CONTENT_LIST_WIDTHS_STORAGE_KEY,
-      version: 2,
+      version: 3, // Added workingDirectories persistence
       partialize: (s) => ({
         theme: s.theme,
         contentListWidthByNav: s.contentListWidthByNav,
         runtimePanelWidth: s.runtimePanelWidth,
         runtimePanelCollapsed: s.runtimePanelCollapsed,
         agentWorkingDirectory: s.agentWorkingDirectory,
+        workingDirectories: s.workingDirectories,
       }),
       merge: (persisted, current) => {
         const patch =
@@ -253,6 +254,7 @@ export const useAppStore = create<AppState>()(
                 runtimePanelWidth?: unknown;
                 runtimePanelCollapsed?: unknown;
                 agentWorkingDirectory?: unknown;
+                workingDirectories?: string[];
               })
             : null;
         const merged: AppState = {
@@ -273,6 +275,16 @@ export const useAppStore = create<AppState>()(
         }
         if (patch?.agentWorkingDirectory && typeof patch.agentWorkingDirectory === "object") {
           merged.agentWorkingDirectory = patch.agentWorkingDirectory as Record<string, string>;
+        }
+        // workingDirectories is restored in the partialize/merge step above
+        // Restore workingDirectories from persisted storage if current is empty
+        // This ensures cwd-session mapping works after app reload
+        if (
+          Array.isArray(patch?.workingDirectories) &&
+          patch.workingDirectories.length > 0 &&
+          (!Array.isArray(current.workingDirectories) || current.workingDirectories.length === 0)
+        ) {
+          merged.workingDirectories = patch.workingDirectories;
         }
         return merged;
       },
