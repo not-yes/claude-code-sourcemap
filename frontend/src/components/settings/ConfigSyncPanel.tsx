@@ -102,16 +102,6 @@ export function ConfigSyncPanel() {
   const [history, setHistory] = useState<SyncHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  // 进度步骤
-  const progressSteps = [
-    { text: "正在连接 GitHub...", key: "connecting" },
-    { text: "正在下载 settings.json...", key: "settings" },
-    { text: "正在下载 agents/ 目录...", key: "agents" },
-    { text: "正在下载 skills/ 目录...", key: "skills" },
-    { text: "正在下载 plugins/ 目录...", key: "plugins" },
-    { text: "正在验证下载结果...", key: "verifying" },
-  ];
-
   // 加载历史记录
   useEffect(() => {
     const loadHistory = () => {
@@ -210,16 +200,7 @@ export function ConfigSyncPanel() {
 
     setLoading(true);
     setMessage(null);
-    setSyncProgress(progressSteps[0].text);
-
-    // 模拟进度动画
-    let progressIndex = 0;
-    const progressInterval = setInterval(() => {
-      progressIndex++;
-      if (progressIndex < progressSteps.length) {
-        setSyncProgress(progressSteps[progressIndex].text);
-      }
-    }, 800);
+    setSyncProgress("正在拉取配置...");
 
     try {
       await invoke("sync_config_pull", {
@@ -228,11 +209,9 @@ export function ConfigSyncPanel() {
         token: token.trim(),
       });
 
-      clearInterval(progressInterval);
       const now = new Date().toLocaleString("zh-CN");
       setLastSync(now);
       setMessage({ type: "success", text: "配置拉取成功" });
-      setSyncProgress("");
       toast.success("配置拉取成功");
 
       addHistory({
@@ -240,7 +219,6 @@ export function ConfigSyncPanel() {
         message: "配置拉取成功"
       });
     } catch (error) {
-      clearInterval(progressInterval);
       console.error("拉取失败:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       const { hint, suggestions } = getErrorHint(errorMessage);
@@ -249,7 +227,6 @@ export function ConfigSyncPanel() {
         type: "error",
         text: hint
       });
-      setSyncProgress("");
       toast.error(`拉取失败: ${hint}`);
 
       addHistory({
