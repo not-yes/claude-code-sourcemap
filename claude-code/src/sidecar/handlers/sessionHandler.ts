@@ -161,14 +161,12 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
       const allSessions: SessionItem[] = []
       const seenIds = new Set<string>()
 
-      // 1. 读取 CLI projects 目录的会话
+      // 1. 读取 CLI projects 目录的会话（权威来源，包含完整的标题和消息历史）
       try {
         // 优先使用前端传递的 cwd，否则使用 agentCore 的 cwd
         const cwd = requestedCwd || agentCore.getState().cwd
-        console.error(`[getSessions] DEBUG: cwd=${cwd}, limit=${limit}, requestedAgentId=${requestedAgentId}`)
 
         const cliSessions = await listSessionsImpl({ dir: cwd, limit: limit * 2 })
-        console.error(`[getSessions] DEBUG: cliSessions.length=${cliSessions.length}`)
 
         for (const s of cliSessions) {
           if (seenIds.has(s.sessionId)) continue
@@ -212,10 +210,10 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
         // CLI 会话读取失败不影响 sidecar 会话
       }
 
-      // 2. 读取 sidecar 自身会话
+      // 2. 读取 sidecar 自身会话（仅作为补充，用于补充尚未写入 CLI 文件的新会话）
+      // 注意：这些会话的标题是 Session xxx 格式，如果 CLI 已有同名会话会被去重
       try {
         const sidecarSessions = await agentCore.listSessions()
-        console.error(`[getSessions] DEBUG: sidecarSessions.length=${sidecarSessions.length}`)
 
         for (const s of sidecarSessions) {
           if (seenIds.has(s.id)) continue
@@ -233,10 +231,20 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
             continue
           }
 
+          // 跳过没有有意义标题的 sidecar 会话（这些会话的消息尚未写入 CLI 文件）
+          // 只有当 CLI 文件存在对应会话时才添加
+          // 由于 CLI 和 Sidecar 使用不同的 sessionId 生成方式（文件名校名 vs UUID），
+          // 这里无法准确匹配，通常 Sidecar 会话的 cwd 应该是 CLI cwd 的子集
+          const title = (s.metadata?.['name'] as string | undefined)
+          // 如果标题是 Session xxx 格式，说明是新会话且尚未写入 CLI，跳过
+          if (!title || title.startsWith('Session ')) {
+            continue
+          }
+
           seenIds.add(s.id)
           allSessions.push({
             id: s.id,
-            title: (s.metadata?.['name'] as string | undefined) || `Session ${s.id.slice(0, 8)}`,
+            title,
             task: undefined,
             agent_id: sessionAgentId,
             created_at: s.createdAt,
@@ -249,7 +257,6 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
         // sidecar 会话读取失败也不影响已获取的 CLI 会话
       }
 
-      console.error(`[getSessions] DEBUG: allSessions.length=${allSessions.length}`)
 
       // 3. 按更新时间降序排序并截断
       allSessions.sort((a, b) => {
