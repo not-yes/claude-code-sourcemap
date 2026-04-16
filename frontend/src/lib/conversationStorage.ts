@@ -4,7 +4,8 @@ const STORAGE_PREFIX = "claude_messages_";
 const MAX_MESSAGES = 500;
 
 /**
- * 生成存储 key，支持按工作目录隔离
+ * 生成存储 key，按工作目录隔离。
+ * Claude Code CLI 默认按 cwd 隔离会话，前端保持一致行为。
  */
 function makeKey(sessionId: string, cwd?: string): string {
   if (cwd) {
@@ -164,31 +165,60 @@ export function clearMessages(sessionId: string, cwd?: string): void {
 const SESSION_TIMESTAMP_PREFIX = 'claude_session_ts_';
 
 /**
+ * 生成时间戳 key，与 makeKey 保持一致格式。
+ */
+function makeTsKey(sessionId: string, cwd?: string): string {
+  if (cwd) {
+    const safeCwd = cwd.replace(/[:/\\]/g, '_');
+    return `${SESSION_TIMESTAMP_PREFIX}${sessionId}_${safeCwd}`;
+  }
+  return `${SESSION_TIMESTAMP_PREFIX}${sessionId}`;
+}
+
+/**
  * 更新指定会话的最后访问时间戳。
  * - 支持按工作目录隔离（提供 cwd 参数时）
  */
 export function touchSession(sessionId: string, cwd?: string): void {
   try {
-    const tsKey = `${SESSION_TIMESTAMP_PREFIX}${sessionId}${cwd ? '_' + cwd.replace(/[:/\\]/g, '_') : ''}`;
-    localStorage.setItem(tsKey, Date.now().toString());
+    localStorage.setItem(makeTsKey(sessionId, cwd), Date.now().toString());
   } catch { /* ignore quota errors */ }
 }
 
 /**
  * 清理旧会话，仅保留最近访问的 keepCount 个会话。
+ * 通过 tsKey 遍历（因为 tsKey 有 SESSION_TIMESTAMP_PREFIX 前缀，易于识别），
+ * 再用 makeKey 尝试找到对应的 msgKey。
  */
 export function cleanupOldSessions(keepCount: number = 10): void {
   try {
-    const sessions: { key: string; tsKey: string | null; ts: number }[] = [];
+    // 从 tsKey 格式反推可能的 msgKey
+    // tsKey 格式: claude_session_ts_{sessionId}_{safeCwd} 或 claude_session_ts_{sessionId}
+    const sessions: { msgKey: string | null; tsKey: string; ts: number }[] = [];
+
     for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(STORAGE_PREFIX)) {
-        // 尝试找到对应的时间戳 key
-        const sessionPart = key.slice(STORAGE_PREFIX.length);
-        const tsKey = `${SESSION_TIMESTAMP_PREFIX}${sessionPart}`;
-        const ts = parseInt(localStorage.getItem(tsKey) || '0', 10);
-        sessions.push({ key, tsKey, ts });
+      const tsKey = localStorage.key(i);
+      if (!tsKey || !tsKey.startsWith(SESSION_TIMESTAMP_PREFIX)) continue;
+
+      const tsPart = tsKey.slice(SESSION_TIMESTAMP_PREFIX.length);
+      const lastUnderscore = tsPart.lastIndexOf('_');
+      let sessionId: string;
+      let safeCwd: string | undefined;
+
+      if (lastUnderscore > 0) {
+        sessionId = tsPart.slice(0, lastUnderscore);
+        safeCwd = tsPart.slice(lastUnderscore + 1);
+      } else {
+        sessionId = tsPart;
+        safeCwd = undefined;
       }
+
+      // 用 makeKey 尝试找到对应的 msgKey
+      const msgKey = makeKey(sessionId, safeCwd);
+      const msgKeyExists = localStorage.getItem(msgKey) !== null;
+      const ts = parseInt(localStorage.getItem(tsKey) || '0', 10);
+
+      sessions.push({ msgKey: msgKeyExists ? msgKey : null, tsKey, ts });
     }
 
     if (sessions.length <= keepCount) return;
@@ -196,11 +226,11 @@ export function cleanupOldSessions(keepCount: number = 10): void {
     // 按时间戳升序排列（最旧在前）
     sessions.sort((a, b) => a.ts - b.ts);
 
-    // 删除最旧的会话
+    // 删除最旧的会话（包括 orphaned tsKey 对应的 msgKey）
     const toRemove = sessions.slice(0, sessions.length - keepCount);
     for (const s of toRemove) {
-      localStorage.removeItem(s.key);
-      if (s.tsKey) localStorage.removeItem(s.tsKey);
+      if (s.msgKey) localStorage.removeItem(s.msgKey);
+      localStorage.removeItem(s.tsKey);
     }
   } catch { /* ignore */ }
 }

@@ -7,7 +7,7 @@ import {
   ensureAgent,
   type SessionMessage,
 } from "@/api/tauri-api";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble, type StreamMeta } from "./MessageBubble";
 import { InputArea } from "./InputArea";
 import { PermissionDialog } from "./PermissionDialog";
 import { AskUserQuestionDialog } from "./AskUserQuestionDialog";
@@ -15,7 +15,6 @@ import { PlanApprovalDialog } from "./PlanApprovalDialog";
 import { ConversationHistorySheet } from "./ConversationHistorySheet";
 import { CheckpointSheet } from "./CheckpointSheet";
 import {
-  loadMessages,
   loadMessagesPaginated,
   getTotalMessageCount,
   saveMessages,
@@ -84,6 +83,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const checkpointSheetOpen = useAppStore((s) => s.checkpointSheetOpen);
   const setCheckpointSheetOpen = useAppStore((s) => s.setCheckpointSheetOpen);
   const chatHistoryReloadNonce = useAppStore((s) => s.chatHistoryReloadNonce);
+  const bumpChatHistoryReload = useAppStore((s) => s.bumpChatHistoryReload);
   const setChatExecuteLoading = useAppStore((s) => s.setChatExecuteLoading);
   const setChatHeaderAction = useAppStore((s) => s.setChatHeaderAction);
   const sidecarConnected = useAppStore((s) => s.sidecarConnected);
@@ -103,32 +103,34 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       setAgentWorkingDirectory(agentId, workingDirectories[0]);
     }
   }, [agentId, agentWorkingDirectory, workingDirectories, setAgentWorkingDirectory]);
-  
+
   // 每个 Agent 独立的 backendSessionId（按工作目录隔离）
   // 初始化为 null，完全依赖 useEffect 加载（避免 Zustand rehydration 异步问题）
   const [activeBackendSessionId, setActiveBackendSessionId] = useState<string | null>(null);
-  
+
+  // 追踪上一次 cwd，用于检测 cwd 变化
+  const prevCwdRef = useRef<string | null>(null);
+
   // 工作目录就绪后（或变化时），重新加载对应的会话
   // 当 currentCwd 从空字符串变为有效值时，此 effect 会触发并正确加载 sessionId
   useEffect(() => {
     if (!currentCwd) return; // cwd 未就绪，跳过
+
+    // 检测 cwd 是否真正发生了变化（不是首次加载）
+    const isCwdChanged = prevCwdRef.current !== null && prevCwdRef.current !== currentCwd;
+
+    // 如果切换了目录，清空当前消息（确保新目录使用空白会话）
+    if (isCwdChanged) {
+      setMessages([]);
+      messageOffsetRef.current = PAGE_SIZE;
+      backendOffsetRef.current = 0;
+      setHasMoreMessages(false);
+    }
+
+    prevCwdRef.current = currentCwd;
+
     const newSessionId = loadPersistedBackendSession(agentId, currentCwd);
     setActiveBackendSessionId(newSessionId);
-  }, [agentId, currentCwd]);
-  
-  // 从旧的 key（无 cwd 后缀）迁移消息到新 key（有 cwd 后缀）
-  // 处理 workingDirectories 异步加载导致的存储 key 不一致问题
-  useEffect(() => {
-    if (!currentCwd) return;
-    const oldMessages = loadMessages(agentId);
-    if (oldMessages.length > 0) {
-      const newMessages = loadMessages(agentId, currentCwd);
-      if (newMessages.length === 0) {
-        // 新 key 没有消息，迁移旧消息并删除旧 key
-        saveMessages(agentId, oldMessages, currentCwd);
-        saveMessages(agentId, []);
-      }
-    }
   }, [agentId, currentCwd]);
 
   // 权限状态
@@ -154,6 +156,11 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
+  const streamMetaRef = useRef<StreamMeta>({
+    startTime: 0,
+    tokenEstimate: 0,
+    isThinking: false,
+  });
 
   // 设置 Header 操作按钮
   useEffect(() => {
@@ -207,11 +214,15 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       return;
     }
     isInitialLoadRef.current = false;
-    
+
+    // 确定消息存储使用的 key：优先使用 activeBackendSessionId（从历史会话选择），
+    // 无则使用 agentId（本地新建会话）
+    const messageKey = activeBackendSessionId || agentId;
+
     // 优先从本地加载（包含完整 contentBlocks 的消息）
-    const localTotal = getTotalMessageCount(agentId, currentCwd);
-    const localMessages = loadMessagesPaginated(agentId, 0, PAGE_SIZE, currentCwd);
-    
+    const localTotal = getTotalMessageCount(messageKey, currentCwd);
+    const localMessages = loadMessagesPaginated(messageKey, 0, PAGE_SIZE, currentCwd);
+
     if (localMessages.length > 0) {
       // 本地有完整消息，直接使用（包括 contentBlocks/thinking/tool 信息）
       // 不覆盖，因为后端只保存纯文本，会丢失 UI 展示所需的 contentBlocks
@@ -220,7 +231,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       setHasMoreMessages(localTotal > PAGE_SIZE);
       messageOffsetRef.current = PAGE_SIZE;
       backendOffsetRef.current = 0;
-      
+
       // 仅做后端会话健康检查（不覆盖本地消息）
       if (activeBackendSessionId) {
         getSessionMessages(activeBackendSessionId, agentId, { limit: 1 })
@@ -251,8 +262,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             setHasMoreMessages(startOffset > 0);
             backendOffsetRef.current = startOffset;
           }
-          // 同时保存到本地
-          saveMessages(agentId, fullList.map((m, i) => sessionMessageToMessage(m, i)), currentCwd);
+          // 同时保存到本地（使用 session ID 作为 key）
+          saveMessages(activeBackendSessionId, fullList.map((m, i) => sessionMessageToMessage(m, i)), currentCwd);
         })
         .catch(() => {
           setMessages([]);
@@ -351,7 +362,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     return () => {
       if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
       if (messagesRef.current.length > 0) {
-        saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+        saveMessages(activeBackendSessionIdRef.current || agentId, messagesRef.current, currentCwdRef.current);
       }
     };
   }, [agentId]);
@@ -409,6 +420,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     abortControllerRef.current = new AbortController();
     responseSizeRef.current = 0;
     responseTruncatedRef.current = false;
+    streamMetaRef.current = { startTime: Date.now(), tokenEstimate: 0, isThinking: false };
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -432,7 +444,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       return trimmed;
     });
     // 立即保存用户消息，防止发送后刷新丢失
-    saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+    saveMessages(activeBackendSessionIdRef.current || agentId, messagesRef.current, currentCwdRef.current);
     setLoading(true);
 
     // 获取最新 cwd（防止闭包中 currentCwd 为空字符串）
@@ -491,6 +503,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                   console.log(`[ChatArea] text event: isThinking=${textEvent.isThinking}, content_len=${textEvent.content?.length || 0}`);
                   if (!responseTruncatedRef.current) {
                     responseSizeRef.current += textEvent.content.length;
+                    streamMetaRef.current.tokenEstimate += Math.round(textEvent.content.length / 4);
+                    streamMetaRef.current.isThinking = !!textEvent.isThinking;
                     if (responseSizeRef.current > MAX_RESPONSE_SIZE) {
                       responseTruncatedRef.current = true;
                       const cleaned = removeHeartbeatBlocks();
@@ -530,6 +544,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 }
                 case 'tool_use': {
                   const tuEvent = event as { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+                  streamMetaRef.current.isThinking = false;
                   if (blocks.length < MAX_CONTENT_BLOCKS) {
                     const cleaned = removeHeartbeatBlocks();
                     cleaned.push({ type: 'tool_use', id: tuEvent.id, name: tuEvent.name, input: tuEvent.input || {} });
@@ -540,6 +555,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 }
                 case 'tool_result': {
                   const trEvent = event as { type: 'tool_result'; id: string; toolName: string; result: unknown; isError?: boolean; filePath?: string };
+                  streamMetaRef.current.isThinking = false;
                   if (blocks.length < MAX_CONTENT_BLOCKS) {
                     const cleaned = removeHeartbeatBlocks();
                     cleaned.push({ type: 'tool_result', toolId: trEvent.id, toolName: trEvent.toolName, result: trEvent.result, isError: trEvent.isError, filePath: trEvent.filePath });
@@ -550,6 +566,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 }
                 case 'system_message': {
                   const sysEvent = event as { type: 'system_message'; level: 'info' | 'warning' | 'error'; content: string };
+                  streamMetaRef.current.isThinking = false;
                   if (sysEvent.content && blocks.length < MAX_CONTENT_BLOCKS) {
                     blocks.push({ type: 'system', level: sysEvent.level, content: sysEvent.content });
                   }
@@ -557,6 +574,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 }
                 case 'complete': {
                   const completeEvent = event as { type: 'complete'; usage?: TokenUsage; reason?: string; sessionId?: string };
+                  streamMetaRef.current.isThinking = false;
                   console.log(`[ChatArea] complete event: reason=${completeEvent.reason}, hasUsage=${!!completeEvent.usage}`);
                   completionUsage = completeEvent.usage;
                   if (completeEvent.sessionId) {
@@ -585,6 +603,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                 }
                 case 'error': {
                   const errEvent = event as { type: 'error'; message?: string };
+                  streamMetaRef.current.isThinking = false;
                   blocks.push({ type: 'system', level: 'error', content: errEvent.message || '未知错误' });
                   break;
                 }
@@ -607,7 +626,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             const isCompleted = lastMsg?.role === 'assistant' && lastMsg?.usage !== undefined;
             const delay = isCompleted ? 0 : 500;
             saveDebounceRef.current = setTimeout(() => {
-              saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+              saveMessages(activeBackendSessionIdRef.current || agentId, messagesRef.current, currentCwdRef.current);
               saveDebounceRef.current = null;
             }, delay);
             
@@ -621,7 +640,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
           abortControllerRef.current = null;
           
           if (aborted) {
-            saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+            saveMessages(activeBackendSessionIdRef.current || agentId, messagesRef.current, currentCwdRef.current);
             return;
           }
           
@@ -643,11 +662,11 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             });
             // 错误状态更新后立刻保存
             if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
-            saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+            saveMessages(activeBackendSessionIdRef.current || agentId, messagesRef.current, currentCwdRef.current);
             toast.error(errMsg);
           } else {
             if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
-            saveMessages(agentId, messagesRef.current, currentCwdRef.current);
+            saveMessages(activeBackendSessionIdRef.current || agentId, messagesRef.current, currentCwdRef.current);
             toast.success("任务执行完成");
           }
         },
@@ -888,6 +907,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                     <MessageBubble
                       message={m}
                       streaming={loading && m.role === "assistant" && i === messages.length - 1}
+                      streamMeta={loading && m.role === "assistant" && i === messages.length - 1 ? streamMetaRef.current : undefined}
                       onRetry={
                         m.role === "assistant" && m.content.startsWith("❌") && i > 0
                           ? () => handleRetry(messages[i - 1].content)
@@ -938,6 +958,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
         onSelectSession={(id) => {
           savePersistedBackendSession(agentId, id, currentCwd);
           setActiveBackendSessionId(id);
+          // 触发消息重新加载
+          bumpChatHistoryReload();
           setHistorySheetOpen(false);
         }}
       />

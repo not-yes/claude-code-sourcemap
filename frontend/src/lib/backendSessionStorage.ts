@@ -12,11 +12,11 @@
 const PREFIX = "claude_backend_session_";
 
 /**
- * 生成存储 key，按 (Agent + 工作目录) 隔离会话
+ * 生成存储 key，按 Agent 和工作目录隔离会话。
+ * Claude Code CLI 默认按 cwd 隔离会话，前端保持一致行为。
  */
 function makeKey(agentKey: string, cwd?: string): string {
   if (cwd) {
-    // 工作目录路径可能包含特殊字符，进行简单转义
     const safeCwd = cwd.replace(/[:/\\]/g, '_');
     return `${PREFIX}${agentKey}_${safeCwd}`;
   }
@@ -70,16 +70,26 @@ export function savePersistedBackendSession(
 }
 
 /**
- * 清理属于指定 Agent 列表之外的孤立条目（防止 localStorage 污染累积）。
+ * 清理属于指定 Agent + 工作目录组合之外的孤立条目（防止 localStorage 污染累积）。
  * 应在应用初始化时或 Agent 列表刚加载完毕后调用一次。
  *
- * @param knownAgentKeys - 当前已知有效的 Agent key 列表（包括 "main"）。
+ * @param knownAgentCwdPairs - 当前已知有效的 (agentKey, cwd) 组合列表。
  */
 export function pruneOrphanedBackendSessions(
-  knownAgentKeys: string[]
+  knownAgentCwdPairs: { agentKey: string; cwd?: string }[]
 ): void {
   try {
-    const validKeys = new Set(knownAgentKeys.map((k) => `${PREFIX}${k}`));
+    // 构建有效 key 集合（包含 cwd 后缀和无 cwd 的 fallback）
+    const validKeys = new Set<string>();
+    for (const { agentKey, cwd } of knownAgentCwdPairs) {
+      if (cwd) {
+        const safeCwd = cwd.replace(/[:/\\]/g, '_');
+        validKeys.add(`${PREFIX}${agentKey}_${safeCwd}`);
+      }
+      // 同时保留无 cwd 的 fallback key（向后兼容）
+      validKeys.add(`${PREFIX}${agentKey}`);
+    }
+
     const toRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
