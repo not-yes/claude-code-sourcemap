@@ -472,6 +472,11 @@ impl AgentProcess {
         // 继承父进程所有环境变量
         cmd.envs(std::env::vars());
 
+        // 统一配置目录到 ~/.claude-desktop/，确保覆盖任何继承的值
+        let claude_config_dir = expand_home("~/.claude-desktop");
+        log::info!("AgentProcess::spawn_with_env: 设置 CLAUDE_CONFIG_DIR={}", claude_config_dir);
+        cmd.env("CLAUDE_CONFIG_DIR", &claude_config_dir);
+
         // 标准环境变量
         cmd.env("SIDECAR_MODE", "true");
         cmd.env("CLAUDE_CODE_USE_NATIVE_FILE_SEARCH", "true");
