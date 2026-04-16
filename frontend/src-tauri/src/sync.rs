@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::fs;
-use tauri::command;
+use tauri::{command, Emitter};
 
 /// 展开路径中的 ~ 符号
 fn expand_home(path: &str) -> PathBuf {
@@ -15,6 +15,7 @@ fn expand_home(path: &str) -> PathBuf {
 /// 从 GitHub 拉取配置 (使用 GitHub API)
 #[command]
 pub async fn sync_config_pull(
+    app: tauri::AppHandle,
     repo_url: String,
     username: String,
     token: String,
@@ -34,7 +35,16 @@ pub async fn sync_config_pull(
     // 用户配置在 organizations/{username}/ 目录下
     let user_prefix = format!("organizations/{}", username);
 
+    // 总步骤数：settings + agents + skills + plugins + 完成 = 5
+    let total_steps = 5;
+
     // 下载 settings.json
+    let _ = app.emit("sync:progress", serde_json::json!({
+        "step": 1,
+        "total": total_steps,
+        "message": "下载 settings.json...",
+        "percent": 20
+    }));
     log::info!("下载 settings.json");
     let settings_url = format!("{}/contents/{}/settings.json", base_url, user_prefix);
     match download_file(&client, &settings_url, &token).await {
@@ -50,6 +60,12 @@ pub async fn sync_config_pull(
     }
 
     // 下载 agents/ 目录
+    let _ = app.emit("sync:progress", serde_json::json!({
+        "step": 2,
+        "total": total_steps,
+        "message": "下载 agents/ 目录...",
+        "percent": 40
+    }));
     log::info!("下载 agents/ 目录");
     let agents_url = format!("{}/contents/{}/agents", base_url, user_prefix);
     let agents_dest = claude_dir.join("agents");
@@ -61,6 +77,12 @@ pub async fn sync_config_pull(
     }
 
     // 下载 skills/ 目录
+    let _ = app.emit("sync:progress", serde_json::json!({
+        "step": 3,
+        "total": total_steps,
+        "message": "下载 skills/ 目录...",
+        "percent": 60
+    }));
     log::info!("下载 skills/ 目录");
     let skills_url = format!("{}/contents/{}/skills", base_url, user_prefix);
     let skills_dest = claude_dir.join("skills");
@@ -72,6 +94,12 @@ pub async fn sync_config_pull(
     }
 
     // 下载 plugins/ 目录（插件配置文件，非插件本身）
+    let _ = app.emit("sync:progress", serde_json::json!({
+        "step": 4,
+        "total": total_steps,
+        "message": "下载 plugins/ 目录...",
+        "percent": 80
+    }));
     log::info!("下载 plugins/ 目录");
     let plugins_url = format!("{}/contents/{}/plugins", base_url, user_prefix);
     let plugins_dest = claude_dir.join("plugins");
@@ -81,6 +109,13 @@ pub async fn sync_config_pull(
             log::warn!("plugins/ 目录不存在或下载失败: {}", e);
         }
     }
+
+    let _ = app.emit("sync:progress", serde_json::json!({
+        "step": 5,
+        "total": total_steps,
+        "message": "下载完成",
+        "percent": 100
+    }));
 
     log::info!("配置拉取完成");
     Ok(())

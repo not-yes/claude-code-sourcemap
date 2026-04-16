@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Github, Download, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, KeyRound, History, ChevronRight } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 function SectionHeader({
@@ -97,10 +98,26 @@ export function ConfigSyncPanel() {
   const [tokenSaving, setTokenSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncProgress, setSyncProgress] = useState<string>("");
+  const [syncPercent, setSyncPercent] = useState<number>(0);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [history, setHistory] = useState<SyncHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+
+  // 监听同步进度事件
+  useEffect(() => {
+    const unlisten = listen<{ step: number; total: number; message: string; percent: number }>(
+      "sync:progress",
+      (event) => {
+        setSyncProgress(event.payload.message);
+        setSyncPercent(event.payload.percent);
+      }
+    );
+
+    return () => {
+      unlisten.then(fn => fn());
+    };
+  }, []);
 
   // 加载历史记录
   useEffect(() => {
@@ -200,7 +217,8 @@ export function ConfigSyncPanel() {
 
     setLoading(true);
     setMessage(null);
-    setSyncProgress("正在拉取配置...");
+    setSyncProgress("正在连接...");
+    setSyncPercent(0);
 
     try {
       await invoke("sync_config_pull", {
@@ -212,6 +230,8 @@ export function ConfigSyncPanel() {
       const now = new Date().toLocaleString("zh-CN");
       setLastSync(now);
       setMessage({ type: "success", text: "配置拉取成功" });
+      setSyncProgress("");
+      setSyncPercent(100);
       toast.success("配置拉取成功");
 
       addHistory({
@@ -227,6 +247,8 @@ export function ConfigSyncPanel() {
         type: "error",
         text: hint
       });
+      setSyncProgress("");
+      setSyncPercent(0);
       toast.error(`拉取失败: ${hint}`);
 
       addHistory({
@@ -353,7 +375,14 @@ export function ConfigSyncPanel() {
             <p className="text-sm text-muted-foreground flex items-center gap-2">
               <Loader2 className="w-3 h-3 animate-spin text-primary" />
               {syncProgress}
+              {syncPercent > 0 && <span className="text-xs text-muted-foreground ml-auto">{syncPercent}%</span>}
             </p>
+            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-300"
+                style={{ width: `${syncPercent}%` }}
+              />
+            </div>
           </div>
         )}
 
