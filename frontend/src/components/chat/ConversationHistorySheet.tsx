@@ -44,18 +44,32 @@ function formatSessionTime(ts?: string): string {
   }
 }
 
-/** Display title: title > task first line > preview > session_id. Per API guide + preview fallback. */
+/**
+ * 获取会话显示标题，与 CLI /resume 逻辑一致：
+ * - title: 自定义标题或 AI summary（直接使用，不截断）
+ * - task: firstPrompt（仅当 title 为空时使用，取第一行最多30字符）
+ * - preview: 首条用户消息（仅当 title 和 task 都为空时使用）
+ * - id: 最后 fallback 到 session ID
+ */
 function getDisplayTitle(
   session: SessionItem,
   preview?: string
 ): string {
-  if (session.title?.trim()) return session.title.trim();
+  // 优先使用 title（CLI: customTitle || summary，Sidecar: metadata.name）
+  if (session.title?.trim()) {
+    const title = session.title.trim();
+    // title 过长时截断（防止 UI 溢出）
+    return title.length > 40 ? title.slice(0, 40) + "…" : title;
+  }
+  // title 为空时使用 task（即 firstPrompt），取第一行
   if (session.task?.trim()) {
     const firstLine = session.task.split("\n")[0].trim();
     if (firstLine)
       return firstLine.length > 30 ? firstLine.slice(0, 30) + "…" : firstLine;
   }
+  // task 也为空时使用 preview（首条用户消息）
   if (preview) return preview;
+  // 最后 fallback 到 session ID
   return session.id?.slice(0, 20) ?? "无标题会话";
 }
 
@@ -104,7 +118,8 @@ export function ConversationHistorySheet({
         const batch = sessionList.slice(i, i + CONCURRENCY);
         const results = await Promise.allSettled(
           batch.map(async (s) => {
-            const msgs = await getSessionMessages(s.id, toAgentId(agentId), { limit: 10 });
+            // 传递 cwd 以便后端从 CLI 会话文件读取（fallback）
+            const msgs = await getSessionMessages(s.id, toAgentId(agentId), { limit: 10, cwd: s.cwd as string | undefined });
             const firstUser = msgs.find((m) => m.role === "user");
             return {
               id: s.id,

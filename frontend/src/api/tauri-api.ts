@@ -680,12 +680,12 @@ export async function getSessions(params?: {
  * 获取会话消息列表
  * @param sessionId - 会话 ID
  * @param agentId - Agent 实例 ID（默认为 "main"），用于路由到正确的 Sidecar
- * @param opts - 分页选项
+ * @param opts - 分页选项和 cwd
  */
 export async function getSessionMessages(
   sessionId: string,
   agentId?: string,
-  opts?: { offset?: number; limit?: number }
+  opts?: { offset?: number; limit?: number; cwd?: string }
 ): Promise<SessionMessage[]> {
   return retryableInvoke<SessionMessage[]>("agent_send_request", {
     agentId: agentId ?? "main",

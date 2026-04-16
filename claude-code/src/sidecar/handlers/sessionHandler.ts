@@ -13,6 +13,7 @@
  */
 
 import { z } from 'zod'
+import { readFile } from 'fs/promises'
 import {
   getTotalCost,
   getTotalInputTokens,
@@ -47,6 +48,8 @@ const GetSessionMessagesParamsSchema = z.object({
   sessionId: z.string().min(1, '会话 ID 不能为空'),
   offset: z.number().int().nonnegative().optional(),
   limit: z.number().int().positive().optional(),
+  /** 会话所属的工作目录，用于从 CLI 会话文件读取（fallback） */
+  cwd: z.string().optional(),
 })
 
 const DeleteSessionParamsSchema = z.object({
@@ -225,6 +228,11 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
             continue
           }
 
+          // 如果请求了特定 cwd，按 cwd 过滤（仅显示属于请求目录的会话）
+          if (requestedCwd && s.cwd && s.cwd !== requestedCwd) {
+            continue
+          }
+
           seenIds.add(s.id)
           allSessions.push({
             id: s.id,
@@ -233,7 +241,7 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
             agent_id: sessionAgentId,
             created_at: s.createdAt,
             updated_at: s.updatedAt,
-            cwd: agentCore.getState().cwd || undefined,
+            cwd: s.cwd,
           })
         }
       } catch (err) {
@@ -256,99 +264,163 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
 
   // ─── getSessionMessages ────────────────────────────────────────────────────
 
+  /**
+   * 从 CLI 会话文件（.jsonl）读取消息
+   */
+  async function readMessagesFromCliFile(sessionId: string, cwd: string): Promise<SessionMessage[]> {
+    try {
+      const resolved = await resolveSessionFilePath(sessionId, cwd)
+      if (!resolved) return []
+      const content = await readFile(resolved.filePath, 'utf-8')
+      const lines = content.split('\n').filter(l => l.trim())
+      const messages: SessionMessage[] = []
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line) as Record<string, unknown>
+          // 跳过非消息行（如 session header）
+          if (!entry['type'] && !entry['role']) continue
+          // 跳过 heartbeat/snapshot 等系统消息
+          const type = entry['type'] as string
+          if (type === 'heartbeat' || type === 'snapshot' || type === 'module_block' || type === 'user_context') continue
+          const msg = entry['message'] as Record<string, unknown> | undefined
+          if (msg) {
+            // SDK transcript 格式
+            const role = (msg['role'] as 'user' | 'assistant') ?? 'user'
+            const content = msg['content']
+            let text = ''
+            if (Array.isArray(content)) {
+              text = content.filter((b: any) => b.type === 'text').map((b: any) => b.text ?? '').join('')
+            } else if (typeof content === 'string') {
+              text = content
+            }
+            messages.push({
+              id: (msg['uuid'] as string | undefined) ?? (entry['id'] as string | undefined),
+              role,
+              content: text,
+              created_at: entry['created_at'] as string | undefined,
+            })
+          } else if (entry['role']) {
+            // 旧格式
+            messages.push({
+              id: entry['id'] as string | undefined,
+              role: entry['role'] as 'user' | 'assistant',
+              content: typeof entry['content'] === 'string' ? entry['content'] as string : '',
+              created_at: entry['created_at'] as string | undefined,
+            })
+          }
+        } catch {
+          // 忽略解析错误的行
+        }
+      }
+      return messages
+    } catch {
+      return []
+    }
+  }
+
   server.registerMethod(
     'getSessionMessages',
     async (params: unknown): Promise<SessionMessage[]> => {
-      const { sessionId, offset = 0, limit } = GetSessionMessagesParamsSchema.parse(params)
+      const { sessionId, offset = 0, limit, cwd } = GetSessionMessagesParamsSchema.parse(params)
 
       try {
+        // 优先从 sidecar 会话存储获取
         const session = await agentCore.getSession(sessionId)
-        if (!session) {
-          return []
-        }
-        const msgs: SessionMessage[] = (session.messages ?? []).map((m: unknown) => {
-          const msg = m as Record<string, unknown>
+        let msgs: SessionMessage[]
 
-          // 新格式（SDK transcript 包装）: { type, message: { role, content: [...], uuid }, session_id, ... }
-          if (msg['type'] && msg['message']) {
-            const inner = msg['message'] as Record<string, unknown>
-            const role = (inner['role'] as 'user' | 'assistant') ?? 'user'
+        if (session) {
+          // Sidecar 会话：直接使用 session.messages
+          msgs = (session.messages ?? []).map((m: unknown) => {
+            const msg = m as Record<string, unknown>
 
-            let text = ''
-            const content = inner['content']
-            let contentBlocks: MessageContentBlock[] | undefined
+            // 新格式（SDK transcript 包装）: { type, message: { role, content: [...], uuid }, session_id, ... }
+            if (msg['type'] && msg['message']) {
+              const inner = msg['message'] as Record<string, unknown>
+              const role = (inner['role'] as 'user' | 'assistant') ?? 'user'
 
-            if (Array.isArray(content)) {
-              // content 是 ContentBlock 数组，提取所有 text 块作为纯文本
-              text = content
-                .filter((b: any) => b.type === 'text')
-                .map((b: any) => b.text ?? '')
-                .join('')
+              let text = ''
+              const content = inner['content']
+              let contentBlocks: MessageContentBlock[] | undefined
 
-              // 构建 toolUseMap，用于 tool_result 查找 toolName
-              const toolUseMap: Record<string, string> = {}
-              for (const block of content) {
-                const b = block as Record<string, unknown>
-                if (b['type'] === 'tool_use' && typeof b['id'] === 'string' && typeof b['name'] === 'string') {
-                  toolUseMap[b['id'] as string] = b['name'] as string
+              if (Array.isArray(content)) {
+                // content 是 ContentBlock 数组，提取所有 text 块作为纯文本
+                text = content
+                  .filter((b: any) => b.type === 'text')
+                  .map((b: any) => b.text ?? '')
+                  .join('')
+
+                // 构建 toolUseMap，用于 tool_result 查找 toolName
+                const toolUseMap: Record<string, string> = {}
+                for (const block of content) {
+                  const b = block as Record<string, unknown>
+                  if (b['type'] === 'tool_use' && typeof b['id'] === 'string' && typeof b['name'] === 'string') {
+                    toolUseMap[b['id'] as string] = b['name'] as string
+                  }
                 }
+
+                // 转换每个 content block 为前端格式
+                contentBlocks = content.reduce<MessageContentBlock[]>((acc, block) => {
+                  const b = block as Record<string, unknown>
+                  const bType = b['type'] as string
+
+                  if (bType === 'thinking') {
+                    acc.push({ type: 'thinking', content: (b['thinking'] as string) ?? '' })
+                  } else if (bType === 'text') {
+                    acc.push({ type: 'text', content: (b['text'] as string) ?? '' })
+                  } else if (bType === 'tool_use') {
+                    acc.push({
+                      type: 'tool_use',
+                      id: (b['id'] as string) ?? '',
+                      name: (b['name'] as string) ?? '',
+                      input: (b['input'] as Record<string, unknown>) ?? {},
+                    })
+                  } else if (bType === 'tool_result') {
+                    const toolId = (b['tool_use_id'] as string) ?? ''
+                    acc.push({
+                      type: 'tool_result',
+                      toolId,
+                      toolName: toolUseMap[toolId] ?? '',
+                      result: b['content'] ?? b['output'] ?? null,
+                      isError: (b['is_error'] as boolean | undefined) ?? false,
+                    })
+                  }
+                  // 其余类型（如 image 等）暂忽略
+                  return acc
+                }, [])
+              } else if (typeof content === 'string') {
+                text = content
+              } else {
+                text = JSON.stringify(content ?? '')
               }
 
-              // 转换每个 content block 为前端格式
-              contentBlocks = content.reduce<MessageContentBlock[]>((acc, block) => {
-                const b = block as Record<string, unknown>
-                const bType = b['type'] as string
-
-                if (bType === 'thinking') {
-                  acc.push({ type: 'thinking', content: (b['thinking'] as string) ?? '' })
-                } else if (bType === 'text') {
-                  acc.push({ type: 'text', content: (b['text'] as string) ?? '' })
-                } else if (bType === 'tool_use') {
-                  acc.push({
-                    type: 'tool_use',
-                    id: (b['id'] as string) ?? '',
-                    name: (b['name'] as string) ?? '',
-                    input: (b['input'] as Record<string, unknown>) ?? {},
-                  })
-                } else if (bType === 'tool_result') {
-                  const toolId = (b['tool_use_id'] as string) ?? ''
-                  acc.push({
-                    type: 'tool_result',
-                    toolId,
-                    toolName: toolUseMap[toolId] ?? '',
-                    result: b['content'] ?? b['output'] ?? null,
-                    isError: (b['is_error'] as boolean | undefined) ?? false,
-                  })
-                }
-                // 其余类型（如 image 等）暂忽略
-                return acc
-              }, [])
-            } else if (typeof content === 'string') {
-              text = content
-            } else {
-              text = JSON.stringify(content ?? '')
+              return {
+                id: (inner['uuid'] as string) ?? (msg['id'] as string | undefined),
+                role,
+                content: text,
+                contentBlocks,
+                created_at: (msg['created_at'] as string | undefined),
+              }
             }
 
+            // 旧格式回退（role/content 顶层字段）
             return {
-              id: (inner['uuid'] as string) ?? (msg['id'] as string | undefined),
-              role,
-              content: text,
-              contentBlocks,
-              created_at: (msg['created_at'] as string | undefined),
+              id: msg['id'] as string | undefined,
+              role: (msg['role'] as 'user' | 'assistant') ?? 'user',
+              content:
+                typeof msg['content'] === 'string'
+                  ? (msg['content'] as string)
+                  : String(msg['content'] ?? ''),
+              created_at: msg['created_at'] as string | undefined,
             }
-          }
+          })
+        } else if (cwd) {
+          // CLI 会话（不在 sidecar storage）：从 .jsonl 文件读取
+          msgs = await readMessagesFromCliFile(sessionId, cwd)
+        } else {
+          // 无 session 也无 cwd，返回空
+          msgs = []
+        }
 
-          // 旧格式回退（role/content 顶层字段）
-          return {
-            id: msg['id'] as string | undefined,
-            role: (msg['role'] as 'user' | 'assistant') ?? 'user',
-            content:
-              typeof msg['content'] === 'string'
-                ? (msg['content'] as string)
-                : String(msg['content'] ?? ''),
-            created_at: msg['created_at'] as string | undefined,
-          }
-        })
         // 支持分页
         const sliced = limit !== undefined
           ? msgs.slice(offset, offset + limit)
