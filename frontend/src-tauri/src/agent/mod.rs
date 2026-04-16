@@ -293,10 +293,18 @@ impl AgentManager {
 
         // 3. 从 settings.json 读取 LLM 配置（主数据源）
         // 如果 settings.json 不存在或缺少配置，才从 Keychain 读取（备用）
-        let (settings_key, settings_base_url, settings_models) =
-            process::read_settings_env().unwrap_or_else(|| {
-                (None, None, std::collections::HashMap::new())
-            });
+        let settings_result = process::read_settings_env();
+        log::info!("AgentManager: read_settings_env() returned: {:?}",
+            settings_result.as_ref().map(|(k, u, m)| (
+                k.as_ref().map(|s| if s.len() > 8 { format!("{}...", &s[..4]) } else { "***".to_string() }),
+                u.clone(),
+                m.len()
+            ))
+        );
+
+        let (settings_key, settings_base_url, settings_models) = settings_result.unwrap_or_else(|| {
+            (None, None, std::collections::HashMap::new())
+        });
 
         // Keychain 备用
         let keychain_key = crate::secure_storage::get_api_key_sync().ok().flatten();

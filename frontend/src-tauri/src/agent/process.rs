@@ -283,13 +283,14 @@ impl AgentProcess {
             .stderr(std::process::Stdio::piped())  // 保留 stderr 用于调试
             .kill_on_drop(true);
 
-        // 继承父进程所有环境变量
-        // Sidecar 通过 applyConfigEnvironmentVariables() 自己读取 ~/.claude/settings.json env 字段，
-        // 获取 ANTHROPIC_API_KEY、ANTHROPIC_AUTH_TOKEN、ANTHROPIC_BASE_URL 等认证配置
-        cmd.envs(std::env::vars());
-
         // 统一配置目录到 ~/.claude-desktop/，避免与系统 Claude Code 配置混淆
-        cmd.env("CLAUDE_CONFIG_DIR", expand_home("~/.claude-desktop"));
+        // 这个必须最后设置，以确保覆盖任何继承的环境变量
+        let claude_config_dir = expand_home("~/.claude-desktop");
+        log::info!("AgentProcess::spawn_with_env: 设置 CLAUDE_CONFIG_DIR={}", claude_config_dir);
+
+        // 先继承父进程所有环境变量，然后覆盖 CLAUDE_CONFIG_DIR
+        cmd.envs(std::env::vars());
+        cmd.env("CLAUDE_CONFIG_DIR", &claude_config_dir);
 
         // 确保 SIDECAR_MODE 为 true
         cmd.env("SIDECAR_MODE", "true");
