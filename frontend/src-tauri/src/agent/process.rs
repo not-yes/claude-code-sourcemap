@@ -9,7 +9,9 @@ use tokio::process::{Child, Command};
 pub fn expand_home(path: &str) -> String {
     if path.starts_with("~/") {
         if let Some(home) = dirs_next::home_dir() {
-            return home.join(&path[2..]).to_string_lossy().to_string();
+            let result = home.join(&path[2..]).to_string_lossy().to_string();
+            log::info!("expand_home: {} -> {}", path, result);
+            return result;
         }
     }
     path.to_string()
