@@ -5,6 +5,16 @@ use tauri::Manager;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 
+/// 展开路径中的 ~ 符号
+fn expand_home(path: &str) -> String {
+    if path.starts_with("~/") {
+        if let Some(home) = dirs_next::home_dir() {
+            return home.join(&path[2..]).to_string_lossy().to_string();
+        }
+    }
+    path.to_string()
+}
+
 /// 解析 sidecar 二进制路径
 ///
 /// 优先级：
@@ -239,6 +249,9 @@ impl AgentProcess {
         // Sidecar 通过 applyConfigEnvironmentVariables() 自己读取 ~/.claude/settings.json env 字段，
         // 获取 ANTHROPIC_API_KEY、ANTHROPIC_AUTH_TOKEN、ANTHROPIC_BASE_URL 等认证配置
         cmd.envs(std::env::vars());
+
+        // 统一配置目录到 ~/.claude-desktop/，避免与系统 Claude Code 配置混淆
+        cmd.env("CLAUDE_CONFIG_DIR", expand_home("~/.claude-desktop"));
 
         // 确保 SIDECAR_MODE 为 true
         cmd.env("SIDECAR_MODE", "true");
