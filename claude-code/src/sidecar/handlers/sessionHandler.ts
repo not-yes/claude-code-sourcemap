@@ -335,9 +335,9 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
         const session = await agentCore.getSession(sessionId)
         let msgs: SessionMessage[]
 
-        if (session) {
-          // Sidecar 会话：直接使用 session.messages
-          msgs = (session.messages ?? []).map((m: unknown) => {
+        // 辅助函数：转换消息格式
+        const convertMessages = (messages: unknown[]): SessionMessage[] => {
+          return messages.map((m: unknown) => {
             const msg = m as Record<string, unknown>
 
             // 新格式（SDK transcript 包装）: { type, message: { role, content: [...], uuid }, session_id, ... }
@@ -420,6 +420,20 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
               created_at: msg['created_at'] as string | undefined,
             }
           })
+        }
+
+        if (session) {
+          // Sidecar 会话：优先使用 session.messages
+          const sidecarMsgs = session.messages ?? []
+          if (sidecarMsgs.length > 0) {
+            // 有消息，直接使用
+            msgs = convertMessages(sidecarMsgs)
+          } else if (cwd) {
+            // Sidecar 会话消息为空，尝试从 CLI 文件读取（消息可能只写入了 CLI 文件）
+            msgs = await readMessagesFromCliFile(sessionId, cwd)
+          } else {
+            msgs = []
+          }
         } else if (cwd) {
           // CLI 会话（不在 sidecar storage）：从 .jsonl 文件读取
           msgs = await readMessagesFromCliFile(sessionId, cwd)
