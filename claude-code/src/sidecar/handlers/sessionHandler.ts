@@ -185,7 +185,8 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
             // 忽略提取失败
           }
 
-          const sessionAgentId = agentName || 'main'
+          // 注意：前端 main agent 对应 backend "default"，CLI 会话如果没有 agentName 字段，默认应为 "default"
+          const sessionAgentId = agentName || 'default'
 
           // 如果请求了特定 agent_id，只返回匹配的会话
           if (requestedAgentId && sessionAgentId !== requestedAgentId) {
@@ -219,7 +220,8 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
           if (seenIds.has(s.id)) continue
 
           // 当前 sidecar 进程对应的 agent 身份（由 Rust 启动时通过 AGENT_ID 环境变量注入）
-          const sessionAgentId = process.env.AGENT_ID ?? 'main'
+          // 注意：前端 main agent 对应 backend "default"
+          const sessionAgentId = process.env.AGENT_ID ?? 'default'
 
           // 如果请求了特定 agent_id，只返回匹配的会话
           if (requestedAgentId && sessionAgentId !== requestedAgentId) {
