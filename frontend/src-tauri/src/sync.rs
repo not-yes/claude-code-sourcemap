@@ -168,7 +168,7 @@ async fn download_file(
     Ok(content)
 }
 
-/// 下载目录 (递归)
+/// 下载目录 (递归) - 先删除本地目录再重新下载，确保与 GitHub 一致
 async fn download_directory(
     client: &reqwest::Client,
     url: &str,
@@ -194,6 +194,10 @@ async fn download_directory(
         .await
         .map_err(|e| format!("解析 JSON 失败: {}", e))?;
 
+    // 先删除本地目录（确保与 GitHub 完全一致，删除的文件也被删除）
+    if dest_dir.exists() {
+        fs::remove_dir_all(dest_dir).map_err(|e| format!("删除本地目录失败: {}", e))?;
+    }
     fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
 
     for item in items {
