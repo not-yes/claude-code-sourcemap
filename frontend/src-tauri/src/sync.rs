@@ -2,6 +2,14 @@ use std::path::PathBuf;
 use std::fs;
 use tauri::{command, Emitter};
 
+/// 同步配置项定义
+struct SyncItem {
+    name: &'static str,
+    dest: PathBuf,
+    url_suffix: &'static str,
+    is_directory: bool,
+}
+
 /// 展开路径中的 ~ 符号
 fn expand_home(path: &str) -> PathBuf {
     if path.starts_with("~/") {
@@ -12,7 +20,18 @@ fn expand_home(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// 发送同步进度事件
+fn emit_progress(app: &tauri::AppHandle, step: usize, total: usize, message: &str, percent: usize) {
+    let _ = app.emit("sync:progress", serde_json::json!({
+        "step": step,
+        "total": total,
+        "message": message,
+        "percent": percent
+    }));
+}
+
 /// 从 GitHub 拉取配置 (使用 GitHub API)
+/// 同步策略：先删除本地目录/文件，再从 GitHub 完整下载，确保完全一致
 #[command]
 pub async fn sync_config_pull(
     app: tauri::AppHandle,
@@ -23,7 +42,6 @@ pub async fn sync_config_pull(
     log::info!("开始拉取配置: repo={}, user={}", repo_url, username);
 
     let claude_dir = expand_home("~/.claude-desktop");
-    fs::create_dir_all(&claude_dir).map_err(|e| e.to_string())?;
 
     // 解析仓库 URL
     let (owner, repo) = parse_github_url(&repo_url)?;
@@ -35,89 +53,105 @@ pub async fn sync_config_pull(
     // 用户配置在 organizations/{username}/ 目录下
     let user_prefix = format!("organizations/{}", username);
 
-    // 总步骤数：settings + agents + skills + plugins + 完成 = 5
-    let total_steps = 5;
+    // 定义所有需要同步的项目
+    // 注意：settings.json 是文件，agents/skills/plugins 是目录
+    let items = vec![
+        SyncItem {
+            name: "settings.json",
+            dest: claude_dir.join("settings.json"),
+            url_suffix: "/settings.json",
+            is_directory: false,
+        },
+        SyncItem {
+            name: "agents",
+            dest: claude_dir.join("agents"),
+            url_suffix: "/agents",
+            is_directory: true,
+        },
+        SyncItem {
+            name: "skills",
+            dest: claude_dir.join("skills"),
+            url_suffix: "/skills",
+            is_directory: true,
+        },
+        SyncItem {
+            name: "plugins",
+            dest: claude_dir.join("plugins"),
+            url_suffix: "/plugins",
+            is_directory: true,
+        },
+        SyncItem {
+            name: "CLAUDE.md",
+            dest: claude_dir.join("CLAUDE.md"),
+            url_suffix: "/CLAUDE.md",
+            is_directory: false,
+        },
+    ];
 
-    // 下载 settings.json
-    let _ = app.emit("sync:progress", serde_json::json!({
-        "step": 1,
-        "total": total_steps,
-        "message": "下载 settings.json...",
-        "percent": 20
-    }));
-    log::info!("下载 settings.json");
-    let settings_url = format!("{}/contents/{}/settings.json", base_url, user_prefix);
-    match download_file(&client, &settings_url, &token).await {
-        Ok(content) => {
-            let path = claude_dir.join("settings.json");
-            fs::write(&path, content)
-                .map_err(|e| format!("写入 settings.json 失败: {}", e))?;
-            log::info!("已下载 settings.json 到 {:?}", path);
-        }
-        Err(e) => {
-            log::warn!("settings.json 不存在或下载失败: {}", e);
+    let total_steps = items.len();
+    let mut success_count = 0;
+    let mut fail_count = 0;
+
+    for (index, item) in items.iter().enumerate() {
+        let step = index + 1;
+        let percent = (step * 100) / total_steps;
+
+        emit_progress(&app, step, total_steps, &format!("同步 {}...", item.name), percent);
+
+        let url = format!("{}{}", base_url, item.url_suffix);
+
+        let result = if item.is_directory {
+            download_directory(&client, &url, &token, &item.dest).await
+        } else {
+            let content = download_file(&client, &url, &token).await?;
+            // 下载文件前先删除本地文件（如果存在）
+            if item.dest.exists() {
+                fs::remove_file(&item.dest).map_err(|e| format!("删除本地文件失败: {}", e))?;
+            }
+            // 确保父目录存在
+            if let Some(parent) = item.dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
+            }
+            fs::write(&item.dest, content).map_err(|e| format!("写入文件失败: {}", e))?;
+            Ok(())
+        };
+
+        match result {
+            Ok(_) => {
+                log::info!("同步 {} 成功", item.name);
+                success_count += 1;
+            }
+            Err(e) => {
+                // 404 错误表示 GitHub 上不存在此文件/目录，本地应该也删除
+                if e.contains("HTTP 404") {
+                    if item.dest.exists() {
+                        if item.is_directory {
+                            fs::remove_dir_all(&item.dest)
+                                .map_err(|e| format!("删除本地目录失败: {}", e))?;
+                        } else {
+                            fs::remove_file(&item.dest)
+                                .map_err(|e| format!("删除本地文件失败: {}", e))?;
+                        }
+                        log::info!("GitHub 上不存在 {}，已删除本地", item.name);
+                    } else {
+                        log::info!("GitHub 上不存在 {}，本地也不存在，跳过", item.name);
+                    }
+                } else {
+                    log::warn!("同步 {} 失败: {}", item.name, e);
+                    fail_count += 1;
+                }
+            }
         }
     }
 
-    // 下载 agents/ 目录
-    let _ = app.emit("sync:progress", serde_json::json!({
-        "step": 2,
-        "total": total_steps,
-        "message": "下载 agents/ 目录...",
-        "percent": 40
-    }));
-    log::info!("下载 agents/ 目录");
-    let agents_url = format!("{}/contents/{}/agents", base_url, user_prefix);
-    let agents_dest = claude_dir.join("agents");
-    match download_directory(&client, &agents_url, &token, &agents_dest).await {
-        Ok(_) => log::info!("已下载 agents/ 目录到 {:?}", agents_dest),
-        Err(e) => {
-            log::warn!("agents/ 目录不存在或下载失败: {}", e);
-        }
+    emit_progress(&app, total_steps, total_steps, "同步完成", 100);
+
+    if fail_count > 0 {
+        log::warn!("配置拉取完成，但有 {} 项失败", fail_count);
+    } else {
+        log::info!("配置拉取完成，全部 {} 项成功", success_count);
     }
 
-    // 下载 skills/ 目录
-    let _ = app.emit("sync:progress", serde_json::json!({
-        "step": 3,
-        "total": total_steps,
-        "message": "下载 skills/ 目录...",
-        "percent": 60
-    }));
-    log::info!("下载 skills/ 目录");
-    let skills_url = format!("{}/contents/{}/skills", base_url, user_prefix);
-    let skills_dest = claude_dir.join("skills");
-    match download_directory(&client, &skills_url, &token, &skills_dest).await {
-        Ok(_) => log::info!("已下载 skills/ 目录到 {:?}", skills_dest),
-        Err(e) => {
-            log::warn!("skills/ 目录不存在或下载失败: {}", e);
-        }
-    }
-
-    // 下载 plugins/ 目录（插件配置文件，非插件本身）
-    let _ = app.emit("sync:progress", serde_json::json!({
-        "step": 4,
-        "total": total_steps,
-        "message": "下载 plugins/ 目录...",
-        "percent": 80
-    }));
-    log::info!("下载 plugins/ 目录");
-    let plugins_url = format!("{}/contents/{}/plugins", base_url, user_prefix);
-    let plugins_dest = claude_dir.join("plugins");
-    match download_directory(&client, &plugins_url, &token, &plugins_dest).await {
-        Ok(_) => log::info!("已下载 plugins/ 目录到 {:?}", plugins_dest),
-        Err(e) => {
-            log::warn!("plugins/ 目录不存在或下载失败: {}", e);
-        }
-    }
-
-    let _ = app.emit("sync:progress", serde_json::json!({
-        "step": 5,
-        "total": total_steps,
-        "message": "下载完成",
-        "percent": 100
-    }));
-
-    log::info!("配置拉取完成");
     Ok(())
 }
 
@@ -148,8 +182,14 @@ async fn download_file(
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
 
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
+    let status = response.status();
+
+    if status.as_u16() == 404 {
+        return Err(format!("HTTP 404 - 文件不存在: {}", url));
+    }
+
+    if !status.is_success() {
+        return Err(format!("HTTP {}", status));
     }
 
     // GitHub API 返回 base64 编码的内容
@@ -168,7 +208,7 @@ async fn download_file(
     Ok(content)
 }
 
-/// 下载目录 (递归) - 先删除本地目录再重新下载，确保与 GitHub 一致
+/// 下载目录 (递归) - 先删除本地目录再重新下载，确保与 GitHub 完全一致
 async fn download_directory(
     client: &reqwest::Client,
     url: &str,
@@ -184,6 +224,10 @@ async fn download_directory(
         .map_err(|e| format!("请求失败: {}", e))?;
 
     let status = response.status();
+
+    if status.as_u16() == 404 {
+        return Err(format!("HTTP 404 - 目录不存在: {}", url));
+    }
 
     if !status.is_success() {
         let error_text = response.text().await.unwrap_or_default();
