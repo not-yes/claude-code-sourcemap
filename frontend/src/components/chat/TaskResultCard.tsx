@@ -25,7 +25,7 @@ function parseTaskResult(result: unknown): TaskResult | null {
   if (typeof result === "object" && result !== null) {
     const obj = result as Record<string, unknown>;
     if (Array.isArray(obj.tasks)) {
-      return obj as TaskResult;
+      return obj as unknown as TaskResult;
     }
     // 尝试提取 tasks 数组
     const keys = Object.keys(obj);

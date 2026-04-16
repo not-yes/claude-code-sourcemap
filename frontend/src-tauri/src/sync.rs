@@ -16,92 +16,73 @@ fn expand_home(path: &str) -> PathBuf {
 #[command]
 pub async fn sync_config_pull(
     repo_url: String,
+    username: String,
     token: String,
 ) -> Result<(), String> {
-    log::info!("开始拉取配置: repo={}", repo_url);
-    
-    let claude_dir = expand_home("~/.claude");
+    log::info!("开始拉取配置: repo={}, user={}", repo_url, username);
+
+    let claude_dir = expand_home("~/.claude-desktop");
     fs::create_dir_all(&claude_dir).map_err(|e| e.to_string())?;
-    
+
     // 解析仓库 URL
     let (owner, repo) = parse_github_url(&repo_url)?;
-    
+
     // 创建 HTTP 客户端
     let client = reqwest::Client::new();
     let base_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
-    
+
+    // 用户配置在 organizations/{username}/ 目录下
+    let user_prefix = format!("organizations/{}", username);
+
     // 下载 settings.json
     log::info!("下载 settings.json");
-    let settings_url = format!("{}/contents/settings.json", base_url);
+    let settings_url = format!("{}/contents/{}/settings.json", base_url, user_prefix);
     match download_file(&client, &settings_url, &token).await {
         Ok(content) => {
-            fs::write(claude_dir.join("settings.json"), content)
+            let path = claude_dir.join("settings.json");
+            fs::write(&path, content)
                 .map_err(|e| format!("写入 settings.json 失败: {}", e))?;
-            log::info!("已下载 settings.json");
+            log::info!("已下载 settings.json 到 {:?}", path);
         }
-        Err(e) => log::warn!("settings.json 不存在或下载失败: {}", e),
+        Err(e) => {
+            log::warn!("settings.json 不存在或下载失败: {}", e);
+        }
     }
-    
+
     // 下载 agents/ 目录
     log::info!("下载 agents/ 目录");
-    let agents_url = format!("{}/contents/agents", base_url);
-    match download_directory(&client, &agents_url, &token, &claude_dir.join("agents")).await {
-        Ok(_) => log::info!("已下载 agents/ 目录"),
-        Err(e) => log::warn!("agents/ 目录不存在或下载失败: {}", e),
+    let agents_url = format!("{}/contents/{}/agents", base_url, user_prefix);
+    let agents_dest = claude_dir.join("agents");
+    match download_directory(&client, &agents_url, &token, &agents_dest).await {
+        Ok(_) => log::info!("已下载 agents/ 目录到 {:?}", agents_dest),
+        Err(e) => {
+            log::warn!("agents/ 目录不存在或下载失败: {}", e);
+        }
     }
-    
+
     // 下载 skills/ 目录
     log::info!("下载 skills/ 目录");
-    let skills_url = format!("{}/contents/skills", base_url);
-    match download_directory(&client, &skills_url, &token, &claude_dir.join("skills")).await {
-        Ok(_) => log::info!("已下载 skills/ 目录"),
-        Err(e) => log::warn!("skills/ 目录不存在或下载失败: {}", e),
+    let skills_url = format!("{}/contents/{}/skills", base_url, user_prefix);
+    let skills_dest = claude_dir.join("skills");
+    match download_directory(&client, &skills_url, &token, &skills_dest).await {
+        Ok(_) => log::info!("已下载 skills/ 目录到 {:?}", skills_dest),
+        Err(e) => {
+            log::warn!("skills/ 目录不存在或下载失败: {}", e);
+        }
     }
-    
-    log::info!("配置拉取成功");
-    Ok(())
-}
 
-/// 推送配置到 GitHub (使用 GitHub API)
-#[command]
-pub async fn sync_config_push(
-    repo_url: String,
-    token: String,
-) -> Result<(), String> {
-    log::info!("开始推送配置: repo={}", repo_url);
-    
-    let claude_dir = expand_home("~/.claude");
-    
-    // 解析仓库 URL
-    let (owner, repo) = parse_github_url(&repo_url)?;
-    let base_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
-    
-    // 创建 HTTP 客户端
-    let client = reqwest::Client::new();
-    
-    // 上传 settings.json
-    let settings_path = claude_dir.join("settings.json");
-    if settings_path.exists() {
-        log::info!("上传 settings.json");
-        let content = fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
-        upload_file(&client, &base_url, "settings.json", &content, &token).await?;
+    // 下载 plugins/ 目录（插件配置文件，非插件本身）
+    log::info!("下载 plugins/ 目录");
+    let plugins_url = format!("{}/contents/{}/plugins", base_url, user_prefix);
+    let plugins_dest = claude_dir.join("plugins");
+    match download_directory(&client, &plugins_url, &token, &plugins_dest).await {
+        Ok(_) => log::info!("已下载 plugins/ 目录到 {:?}", plugins_dest),
+        Err(e) => {
+            log::warn!("plugins/ 目录不存在或下载失败: {}", e);
+        }
     }
-    
-    // 上传 agents/ 目录
-    let agents_path = claude_dir.join("agents");
-    if agents_path.exists() {
-        log::info!("上传 agents/ 目录");
-        upload_directory(&client, &base_url, &agents_path, "agents", &token).await?;
-    }
-    
-    // 上传 skills/ 目录
-    let skills_path = claude_dir.join("skills");
-    if skills_path.exists() {
-        log::info!("上传 skills/ 目录");
-        upload_directory(&client, &base_url, &skills_path, "skills", &token).await?;
-    }
-    
-    log::info!("配置推送成功");
+
+    log::info!("配置拉取完成");
     Ok(())
 }
 
@@ -110,7 +91,7 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
     // 支持格式: https://github.com/owner/repo
     let url = url.trim_end_matches('/');
     let parts: Vec<&str> = url.split('/').collect();
-    
+
     if parts.len() >= 5 && parts[2] == "github.com" {
         Ok((parts[3].to_string(), parts[4].to_string()))
     } else {
@@ -131,24 +112,24 @@ async fn download_file(
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
-    
+
     if !response.status().is_success() {
         return Err(format!("HTTP {}", response.status()));
     }
-    
+
     // GitHub API 返回 base64 编码的内容
     let json: serde_json::Value = response.json()
         .await
         .map_err(|e| format!("解析 JSON 失败: {}", e))?;
-    
+
     let content_b64 = json["content"]
         .as_str()
         .ok_or("响应中缺少 content 字段")?;
-    
+
     // 移除换行符并解码 base64
     let content_b64 = content_b64.replace('\n', "");
     let content = base64_decode(&content_b64)?;
-    
+
     Ok(content)
 }
 
@@ -166,37 +147,41 @@ async fn download_directory(
         .send()
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
-    
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
+
+    let status = response.status();
+
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {} - {}", status, error_text));
     }
-    
+
     let items: Vec<serde_json::Value> = response.json()
         .await
         .map_err(|e| format!("解析 JSON 失败: {}", e))?;
-    
+
     fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
-    
+
     for item in items {
         let name = item["name"].as_str().ok_or("缺少 name 字段")?.to_string();
         let item_type = item["type"].as_str().ok_or("缺少 type 字段")?;
-        
+
         match item_type {
             "file" => {
                 let download_url = item["download_url"]
                     .as_str()
                     .ok_or("缺少 download_url")?;
-                
-                let content = client.get(download_url)
-                    .header("Authorization", format!("token {}", token))
+
+                let file_response = client.get(download_url)
                     .header("User-Agent", "claude-desktop")
                     .send()
                     .await
-                    .map_err(|e| format!("下载文件失败: {}", e))?
+                    .map_err(|e| format!("下载文件失败: {}", e))?;
+
+                let content = file_response
                     .bytes()
                     .await
                     .map_err(|e| format!("读取文件内容失败: {}", e))?;
-                
+
                 fs::write(dest_dir.join(&name), content)
                     .map_err(|e| format!("写入文件失败: {}", e))?;
             }
@@ -208,109 +193,8 @@ async fn download_directory(
             _ => {}
         }
     }
-    
+
     Ok(())
-}
-
-/// 上传单个文件
-async fn upload_file(
-    client: &reqwest::Client,
-    base_url: &str,
-    path: &str,
-    content: &str,
-    token: &str,
-) -> Result<(), String> {
-    // 先获取文件 SHA (如果存在)
-    let sha = get_file_sha(client, base_url, path, token).await.ok();
-    
-    let url = format!("{}/contents/{}", base_url, path);
-    let mut body = serde_json::json!({
-        "message": format!("update: 从桌面推送 {}", path),
-        "content": base64_encode(content.as_bytes()),
-    });
-    
-    if let Some(sha) = sha {
-        body["sha"] = serde_json::json!(sha);
-    }
-    
-    let response = client.put(&url)
-        .header("Authorization", format!("token {}", token))
-        .header("Accept", "application/vnd.github.v3+json")
-        .header("User-Agent", "claude-desktop")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {}", e))?;
-    
-    if !response.status().is_success() {
-        let error = response.text().await.unwrap_or_default();
-        return Err(format!("上传失败: {}", error));
-    }
-    
-    Ok(())
-}
-
-/// 上传目录 (递归)
-async fn upload_directory(
-    client: &reqwest::Client,
-    base_url: &str,
-    dir_path: &PathBuf,
-    remote_path: &str,
-    token: &str,
-) -> Result<(), String> {
-    for entry in fs::read_dir(dir_path).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        let path = entry.path();
-        
-        if path.is_dir() {
-            let remote_sub_path = format!("{}/{}", remote_path, name);
-            Box::pin(upload_directory(client, base_url, &path, &remote_sub_path, token)).await?;
-        } else {
-            let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            let remote_file_path = format!("{}/{}", remote_path, name);
-            upload_file(client, base_url, &remote_file_path, &content, token).await?;
-        }
-    }
-    
-    Ok(())
-}
-
-/// 获取文件 SHA
-async fn get_file_sha(
-    client: &reqwest::Client,
-    base_url: &str,
-    path: &str,
-    token: &str,
-) -> Result<String, String> {
-    let url = format!("{}/contents/{}", base_url, path);
-    
-    let response = client.get(&url)
-        .header("Authorization", format!("token {}", token))
-        .header("Accept", "application/vnd.github.v3+json")
-        .header("User-Agent", "claude-desktop")
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {}", e))?;
-    
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
-    }
-    
-    let json: serde_json::Value = response.json()
-        .await
-        .map_err(|e| format!("解析 JSON 失败: {}", e))?;
-    
-    json["sha"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or("缺少 sha 字段".to_string())
-}
-
-/// Base64 编码
-fn base64_encode(bytes: &[u8]) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 /// Base64 解码

@@ -5,7 +5,7 @@ import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { CronPanel } from "@/components/cron/CronPanel";
 import { SkillsPanel } from "@/components/skills/SkillsPanel";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
-import { WorkspacePanel } from "@/components/workspace/WorkspacePanel";
+
 import { ContentHeader } from "@/components/layout/ContentHeader";
 import { useAgents } from "@/hooks/useAgents";
 import { useAgentMetadataStore } from "@/stores/agentMetadataStore";
@@ -22,14 +22,6 @@ export function MainContent() {
   const agentDisplayName = selectedAgent
     ? (getMeta(selectedAgent.id)?.displayName ?? selectedAgent.name)
     : "";
-
-  if (activeNav === "workspace") {
-    return (
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <WorkspacePanel />
-      </div>
-    );
-  }
 
   if (activeNav === "stats") {
     return (

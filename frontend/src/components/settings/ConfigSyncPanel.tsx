@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { GithubIcon, Download, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, KeyRound } from "lucide-react";
+import { GithubIcon, Download, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, KeyRound, History, ChevronRight } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
@@ -22,6 +22,70 @@ function SectionHeader({
   );
 }
 
+interface SyncHistoryItem {
+  id: string;
+  time: string;
+  status: "success" | "error";
+  message: string;
+  details?: string[];
+}
+
+function getErrorHint(error: string): { hint: string; suggestions: string[] } {
+  const lowerError = error.toLowerCase();
+
+  if (lowerError.includes("404") || lowerError.includes("not found")) {
+    return {
+      hint: "仓库或文件不存在",
+      suggestions: [
+        "检查 Token 是否有访问该仓库的权限",
+        "确认仓库地址是否正确",
+        "如果是私有仓库，需要 Token 有 repo 权限"
+      ]
+    };
+  }
+
+  if (lowerError.includes("403") || lowerError.includes("forbidden") || lowerError.includes("permission")) {
+    return {
+      hint: "访问权限被拒绝",
+      suggestions: [
+        "Token 可能缺少必要权限",
+        "检查 Token 是否已勾选 repo 权限",
+        "确认仓库是否是私有的"
+      ]
+    };
+  }
+
+  if (lowerError.includes("network") || lowerError.includes("connection") || lowerError.includes("超时")) {
+    return {
+      hint: "网络连接问题",
+      suggestions: [
+        "检查网络连接是否正常",
+        "可能需要配置代理",
+        "GitHub API 在某些地区可能访问受限"
+      ]
+    };
+  }
+
+  if (lowerError.includes("401") || lowerError.includes("unauthorized") || lowerError.includes("invalid")) {
+    return {
+      hint: "Token 无效或已过期",
+      suggestions: [
+        "检查 Token 是否正确",
+        "Token 可能已过期，需要重新生成",
+        "确认使用的是 Personal Access Token 而不是 OAuth token"
+      ]
+    };
+  }
+
+  return {
+    hint: "拉取失败",
+    suggestions: [
+      "请查看详细错误信息",
+      "检查网络连接和 Token 权限"
+    ]
+  };
+}
+
 export function ConfigSyncPanel() {
   const REPO_URL = "https://github.com/not-yes/config-sync-hub";
 
@@ -31,8 +95,50 @@ export function ConfigSyncPanel() {
   const [tokenSaved, setTokenSaved] = useState(false);
   const [tokenSaving, setTokenSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<string>("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [history, setHistory] = useState<SyncHistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [expandedError, setExpandedError] = useState(false);
+
+  // 进度步骤
+  const progressSteps = [
+    { text: "正在连接 GitHub...", key: "connecting" },
+    { text: "正在下载 settings.json...", key: "settings" },
+    { text: "正在下载 agents/ 目录...", key: "agents" },
+    { text: "正在下载 skills/ 目录...", key: "skills" },
+    { text: "正在下载 plugins/ 目录...", key: "plugins" },
+    { text: "正在验证下载结果...", key: "verifying" },
+  ];
+
+  // 加载历史记录
+  useEffect(() => {
+    const loadHistory = () => {
+      try {
+        const saved = localStorage.getItem("config-sync-history");
+        if (saved) {
+          const parsed = JSON.parse(saved) as SyncHistoryItem[];
+          setHistory(parsed.slice(0, 10)); // 最多显示10条
+        }
+      } catch (e) {
+        console.error("加载历史记录失败:", e);
+      }
+    };
+    loadHistory();
+  }, []);
+
+  // 保存历史记录
+  const addHistory = (item: Omit<SyncHistoryItem, "id" | "time">) => {
+    const newItem: SyncHistoryItem = {
+      ...item,
+      id: Date.now().toString(),
+      time: new Date().toLocaleString("zh-CN")
+    };
+    const updated = [newItem, ...history].slice(0, 10);
+    setHistory(updated);
+    localStorage.setItem("config-sync-history", JSON.stringify(updated));
+  };
 
   useEffect(() => {
     const loadCredentials = async () => {
@@ -103,26 +209,63 @@ export function ConfigSyncPanel() {
 
     setLoading(true);
     setMessage(null);
-    toast.info("正在从 GitHub 拉取配置...");
+    setExpandedError(false);
+    setSyncProgress(progressSteps[0].text);
+
+    // 模拟进度动画
+    let progressIndex = 0;
+    const progressInterval = setInterval(() => {
+      progressIndex++;
+      if (progressIndex < progressSteps.length) {
+        setSyncProgress(progressSteps[progressIndex].text);
+      }
+    }, 800);
 
     try {
       await invoke("sync_config_pull", {
         repoUrl: REPO_URL,
         username: username.trim(),
-        token: token.trim()
+        token: token.trim(),
       });
 
-      setLastSync(new Date().toLocaleString("zh-CN"));
+      clearInterval(progressInterval);
+      const now = new Date().toLocaleString("zh-CN");
+      setLastSync(now);
       setMessage({ type: "success", text: "配置拉取成功" });
+      setSyncProgress("");
       toast.success("配置拉取成功");
+
+      addHistory({
+        status: "success",
+        message: "配置拉取成功"
+      });
     } catch (error) {
+      clearInterval(progressInterval);
       console.error("拉取失败:", error);
-      const errorMessage = error instanceof Error ? error.message : "未知错误";
-      setMessage({ type: "error", text: `拉取失败: ${errorMessage}` });
-      toast.error(`拉取失败: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const { hint, suggestions } = getErrorHint(errorMessage);
+
+      setMessage({
+        type: "error",
+        text: hint
+      });
+      setSyncProgress("");
+      toast.error(`拉取失败: ${hint}`);
+
+      addHistory({
+        status: "error",
+        message: hint,
+        details: suggestions
+      });
     } finally {
       setLoading(false);
     }
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    localStorage.removeItem("config-sync-history");
+    toast.success("历史记录已清除");
   };
 
   return (
@@ -213,7 +356,7 @@ export function ConfigSyncPanel() {
       </div>
 
       {/* 操作按钮 */}
-      <div className="border-b p-4">
+      <div className="border-b p-4 space-y-4">
         <Button
           onClick={pullConfig}
           disabled={loading || !username.trim() || !token.trim()}
@@ -227,30 +370,132 @@ export function ConfigSyncPanel() {
           {loading ? "拉取中..." : "从 GitHub 拉取配置"}
         </Button>
 
+        {/* 进度显示 */}
+        {loading && syncProgress && (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="w-3 h-3 animate-spin text-primary" />
+              {syncProgress}
+            </p>
+            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary rounded-full animate-pulse transition-all duration-300"
+                style={{ width: "100%" }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* 状态显示 */}
         {message && (
-          <div className={`flex items-start gap-3 mt-4 p-3 rounded-md border ${
+          <div className={`flex items-start gap-3 p-4 rounded-lg border ${
             message.type === "success"
               ? "bg-green-50 dark:bg-green-950/80 border-green-200 dark:border-green-800"
               : "bg-red-50 dark:bg-red-950/80 border-red-200 dark:border-red-800"
           }`}>
             <div className={message.type === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-              {message.type === "success" ? <CheckCircle className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+              {message.type === "success" ? <CheckCircle className="w-5 h-5 flex-shrink-0" /> : <AlertCircle className="w-5 h-5 flex-shrink-0" />}
             </div>
-            <p className={`text-sm font-medium ${message.type === "success" ? "text-green-800 dark:text-green-100" : "text-red-800 dark:text-red-100"}`}>
-              {message.text}
-            </p>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-medium ${message.type === "success" ? "text-green-800 dark:text-green-100" : "text-red-800 dark:text-red-100"}`}>
+                {message.text}
+              </p>
+
+              {/* 错误详情 - 展开查看 */}
+              {message.type === "error" && history.length > 0 && (
+                <>
+                  <button
+                    onClick={() => setExpandedError(!expandedError)}
+                    className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 mt-2 flex items-center gap-1"
+                  >
+                    <ChevronRight size={14} className={`transition-transform ${expandedError ? "rotate-90" : ""}`} />
+                    {expandedError ? "收起详情" : "查看解决方案"}
+                  </button>
+
+                  {expandedError && history[0]?.details && (
+                    <ul className="mt-2 space-y-1">
+                      {history[0].details.map((suggestion, i) => (
+                        <li key={i} className="text-xs text-red-700 dark:text-red-300 flex items-start gap-1.5">
+                          <span className="text-red-400">•</span>
+                          {suggestion}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
 
         {/* 最后同步时间 */}
         {lastSync && (
-          <p className="text-xs text-muted-foreground mt-3">
+          <p className="text-xs text-muted-foreground">
             最后同步: {lastSync}
           </p>
         )}
       </div>
 
+      {/* 同步历史 */}
+      {history.length > 0 && (
+        <div className="p-4 border rounded-lg bg-card">
+          <div className="flex items-center justify-between mb-3">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="flex items-center gap-2 text-sm font-medium text-foreground hover:text-primary transition-colors"
+            >
+              <History size={16} className="text-muted-foreground" />
+              同步历史
+              <span className="text-xs text-muted-foreground font-normal">({history.length})</span>
+              <ChevronRight size={14} className={`transition-transform ${showHistory ? "rotate-90" : ""}`} />
+            </button>
+            <button
+              onClick={clearHistory}
+              className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+            >
+              清除
+            </button>
+          </div>
+
+          {showHistory && (
+            <div className="space-y-2">
+              {history.map((item) => (
+                <div
+                  key={item.id}
+                  className={`flex items-start gap-3 p-3 rounded-md border text-sm ${
+                    item.status === "success"
+                      ? "bg-green-50/50 dark:bg-green-950/30 border-green-100 dark:border-green-900"
+                      : "bg-red-50/50 dark:bg-red-950/30 border-red-100 dark:border-red-900"
+                  }`}
+                >
+                  <div className={item.status === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                    {item.status === "success" ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <p className={item.status === "success" ? "text-green-800 dark:text-green-200" : "text-red-800 dark:text-red-200"}>
+                        {item.message}
+                      </p>
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {item.time}
+                      </span>
+                    </div>
+                    {expandedError && item.details && (
+                      <ul className="mt-1.5 space-y-0.5">
+                        {item.details.map((detail, i) => (
+                          <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
+                            <span className="text-muted-foreground/50">•</span>
+                            {detail}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -19,7 +19,6 @@ function defaultContentListWidths(): Record<NavPanel, number> {
     cron: CONTENT_LIST_WIDTH_DEFAULT,
     skills: CONTENT_LIST_WIDTH_DEFAULT,
     settings: CONTENT_LIST_WIDTH_DEFAULT,
-    workspace: CONTENT_LIST_WIDTH_DEFAULT,
   };
 }
 

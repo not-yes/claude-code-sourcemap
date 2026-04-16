@@ -35,7 +35,7 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
             .unwrap_or(exe_path.clone());
 
         log::info!("resolve_sidecar_path: [2] 当前 exe 目录: {:?}", exe_dir);
-        
+
         // 列出 exe 目录内容(仅 Windows 调试)
         #[cfg(windows)]
         {
@@ -389,13 +389,13 @@ impl AgentProcess {
     ///
     /// - `sidecar_path`: sidecar 可执行文件路径
     /// - `cwd`: 工作目录
-    /// - `env_vars`: 额外注入的环境变量（在标准变量之后注入）
+    /// - `env_vars`: 额外注入的环境变量（owned 类型，避免生命周期问题）
     ///
     /// 返回 `(AgentProcess, stdout, exit_rx)`，其中 `exit_rx` 在进程退出时触发
     pub async fn spawn_with_env(
         sidecar_path: &str,
         cwd: &str,
-        env_vars: &[(&str, &str)],
+        env_vars: Vec<(String, String)>,
     ) -> Result<(Self, tokio::process::ChildStdout, tokio::sync::oneshot::Receiver<std::process::ExitStatus>)> {
         debug_log(&format!("AgentProcess::spawn_with_env: 即将启动 sidecar path={} cwd={}", sidecar_path, cwd));
         log::info!("AgentProcess::spawn_with_env: 即将启动 sidecar path={} cwd={}", sidecar_path, cwd);

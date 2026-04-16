@@ -440,18 +440,18 @@ impl IpcBridge {
                             event.get("content").and_then(|c| c.as_str()).map(|s| if s.len() > 50 { format!("{}...", safe_truncate(s, 50)) } else { s.to_string() }).unwrap_or_default()
                         };
                         log::info!("IpcBridge: 收到流式事件 executeId={} type={} content={}", eid, event_type, content_preview);
-                        
+
                         // 关键事件 (error/complete) 使用阻塞发送，确保不丢失
                         // 普通事件使用 try_send 避免阻塞 reader task
                         let is_critical = event_type == "error" || event_type == "complete";
-                        
+
                         if is_critical {
                             // 阻塞发送关键事件（带超时保护）
                             let send_result = tokio::time::timeout(
                                 std::time::Duration::from_secs(5),
                                 entry.tx.send(event),
                             ).await;
-                            
+
                             match send_result {
                                 Ok(Ok(())) => { /* 正常发送 */ }
                                 Ok(Err(_)) => {

@@ -180,10 +180,10 @@ impl AgentManager {
             NeedEvict,
             CanStart,
         }
-        
+
         let action = {
             let _start_guard = self.start_lock.lock().await;
-            
+
             // 幂等检查 + 并发限制检查
             let agents = self.agents.read().await;
             if agents.contains_key(agent_id) {
@@ -220,7 +220,7 @@ impl AgentManager {
                 StartAction::CanStart
             }
         }; // start_lock 在此释放，不阻塞 do_start_agent
-        
+
         // 阶段2: 在锁外执行实际启动（包含等待 $/ready，最长30秒）
         match action {
             StartAction::AlreadyRunning => Ok(()),
@@ -291,11 +291,88 @@ impl AgentManager {
         // 因此将 prepare_start 返回的 rx drop 掉（不用），改用下面独立的 oneshot channel
         let _unused_ready_rx = lifecycle.prepare_start().await;
 
-        // 3. 启动子进程，注入 AGENT_ID 和 SIDECAR_CWD 环境变量
+        // 3. 从安全存储读取 LLM 配置（优先级高于 settings.json）
+        // 这些值会在 Sidecar 启动时注入环境变量，覆盖 settings.json 中的同名配置
+        let api_key = crate::secure_storage::get_api_key_sync().ok().flatten();
+        let base_url = crate::secure_storage::get_base_url_sync().ok().flatten();
+        // 模型配置（5个字段）
+        let model = crate::secure_storage::get_model_sync().ok().flatten();
+        let small_fast_model = crate::secure_storage::get_small_fast_model_sync().ok().flatten();
+        let sonnet_model = crate::secure_storage::get_sonnet_model_sync().ok().flatten();
+        let opus_model = crate::secure_storage::get_opus_model_sync().ok().flatten();
+        let haiku_model = crate::secure_storage::get_haiku_model_sync().ok().flatten();
+
+        // 记录配置来源
+        if let Some(ref key) = api_key {
+            let masked = if key.len() > 8 {
+                format!("{}...{}", &key[..4], &key[key.len()-4..])
+            } else {
+                "***".to_string()
+            };
+            log::info!("AgentManager: 从安全存储读取 API Key: {}", masked);
+        }
+        if let Some(ref url) = base_url {
+            log::info!("AgentManager: 从安全存储读取 Base URL: {}", url);
+        }
+        if let Some(ref m) = model {
+            log::info!("AgentManager: 从安全存储读取主模型: {}", m);
+        }
+        if let Some(ref m) = small_fast_model {
+            log::info!("AgentManager: 从安全存储读取快速模型: {}", m);
+        }
+        if let Some(ref m) = sonnet_model {
+            log::info!("AgentManager: 从安全存储读取 Sonnet 模型: {}", m);
+        }
+        if let Some(ref m) = opus_model {
+            log::info!("AgentManager: 从安全存储读取 Opus 模型: {}", m);
+        }
+        if let Some(ref m) = haiku_model {
+            log::info!("AgentManager: 从安全存储读取 Haiku 模型: {}", m);
+        }
+
+        // 4. 构建环境变量列表（使用 owned 类型避免生命周期问题）
+        let mut env_vars: Vec<(String, String)> = vec![
+            ("AGENT_ID".to_string(), agent_id.to_string()),
+            ("SIDECAR_CWD".to_string(), cwd.to_string()),
+        ];
+
+        // 根据 Token 类型注入正确的环境变量
+        // sk-cp-* 是 Claude Pro Token，使用 Bearer 认证
+        // sk-ant-* 是 API Key，使用 x-api-key 认证
+        if let Some(key) = api_key {
+            if key.starts_with("sk-cp-") {
+                env_vars.push(("ANTHROPIC_AUTH_TOKEN".to_string(), key));
+                log::info!("AgentManager: 注入 ANTHROPIC_AUTH_TOKEN (Claude Pro Token)");
+            } else {
+                env_vars.push(("ANTHROPIC_API_KEY".to_string(), key));
+                log::info!("AgentManager: 注入 ANTHROPIC_API_KEY");
+            }
+        }
+        if let Some(url) = base_url {
+            env_vars.push(("ANTHROPIC_BASE_URL".to_string(), url));
+        }
+        // 注入模型配置
+        if let Some(m) = model {
+            env_vars.push(("ANTHROPIC_MODEL".to_string(), m));
+        }
+        if let Some(m) = small_fast_model {
+            env_vars.push(("ANTHROPIC_SMALL_FAST_MODEL".to_string(), m));
+        }
+        if let Some(m) = sonnet_model {
+            env_vars.push(("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), m));
+        }
+        if let Some(m) = opus_model {
+            env_vars.push(("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), m));
+        }
+        if let Some(m) = haiku_model {
+            env_vars.push(("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), m));
+        }
+
+        // 5. 启动子进程，注入环境变量
         let (agent_proc, stdout, exit_rx) = AgentProcess::spawn_with_env(
             &sidecar_path_str,
             cwd,
-            &[("AGENT_ID", agent_id), ("SIDECAR_CWD", cwd)],
+            env_vars,
         ).await?;
 
         // 4. 创建 stdin writer channel（缓冲 256 条消息）
@@ -516,7 +593,7 @@ impl AgentManager {
                 log::info!("AgentManager: 已发送退出信号给后台任务");
             }
         }
-        
+
         let agent_ids: Vec<String> = {
             let agents = self.agents.read().await;
             agents.keys().cloned().collect()

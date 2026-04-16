@@ -109,17 +109,45 @@ export function SettingsPanel() {
   const [apiKeyMask, setApiKeyMask] = useState("");
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const [apiKeySaved, setApiKeySaved] = useState(false);
+
+  // Base URL 状态
+  const [baseUrlInput, setBaseUrlInput] = useState("");
+  const [baseUrlConfigured, setBaseUrlConfigured] = useState(false);
+  const [baseUrlSaving, setBaseUrlSaving] = useState(false);
+  const [baseUrlSaved, setBaseUrlSaved] = useState(false);
+
+  // Model 状态
   const [customModel, setCustomModel] = useState("");
+  const [customModelSaved, setCustomModelSaved] = useState(false);
 
-  const PRESET_MODELS = [
-    "claude-sonnet-4-20250514",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-opus-20240229",
-    "claude-3-haiku-20240307",
-  ];
+  // 场景模型状态
+  const [smallFastModel, setSmallFastModel] = useState("");
+  const [sonnetModel, setSonnetModel] = useState("");
+  const [opusModel, setOpusModel] = useState("");
+  const [haikuModel, setHaikuModel] = useState("");
+  const [showAdvancedModels, setShowAdvancedModels] = useState(false);
 
-  const isPreset = PRESET_MODELS.includes(selectedModel);
-  const [useCustomModel, setUseCustomModel] = useState(!isPreset);
+  // 场景模型保存反馈
+  const [smallFastModelSaved, setSmallFastModelSaved] = useState(false);
+  const [sonnetModelSaved, setSonnetModelSaved] = useState(false);
+  const [opusModelSaved, setOpusModelSaved] = useState(false);
+  const [haikuModelSaved, setHaikuModelSaved] = useState(false);
+
+  // 通用场景模型保存函数
+  const saveSceneModel = async (
+    cmd: string,
+    model: string,
+    setSaved: (v: boolean) => void
+  ) => {
+    if (!checkIsTauri() || !model.trim()) return;
+    try {
+      await invoke(cmd, { model: model.trim() });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      console.error(`保存模型失败 (${cmd}):`, e);
+    }
+  };
 
   // config.toml 相关状态
   const [editedContent, setEditedContent] = useState("");
@@ -133,32 +161,78 @@ export function SettingsPanel() {
   const [notificationsSaved, setNotificationsSaved] = useState(false);
   const [advancedSaved, setAdvancedSaved] = useState(false);
 
-  // 加载已存储的 API Key、模型
+  // 加载已存储的 API Key、Base URL、模型
   useEffect(() => {
-    if (!checkIsTauri()) return;
+    const isTauri = checkIsTauri();
+    console.log("SettingsPanel: checkIsTauri =", isTauri);
+    if (!isTauri) return;
+
     const loadSettings = async () => {
       try {
-        const [storedKey, storedModel] = await Promise.all([
-          invoke<string | null>("get_config", { key: "api_key" }),
-          invoke<string | null>("get_config", { key: "selected_model" }),
-        ]);
-        if (storedKey) {
+        console.log("SettingsPanel: 开始加载 LLM 配置...");
+        // 批量读取 LLM 配置
+        const config = await invoke<{
+          api_key: string | null;
+          base_url: string | null;
+          model: string | null;
+          small_fast_model: string | null;
+          sonnet_model: string | null;
+          opus_model: string | null;
+          haiku_model: string | null;
+        }>("get_llm_config");
+
+        console.log("SettingsPanel: get_llm_config 返回", JSON.stringify({
+          api_key: config.api_key ? "***" : null,
+          base_url: config.base_url,
+          model: config.model,
+        }));
+
+        // API Key
+        if (config.api_key) {
           const masked =
-            storedKey.length > 8
-              ? storedKey.slice(0, 3) + "..." + storedKey.slice(-4)
+            config.api_key.length > 8
+              ? config.api_key.slice(0, 3) + "..." + config.api_key.slice(-4)
               : "***";
           setApiKeyMask(masked);
           setApiKeyConfigured(true);
         }
-        if (storedModel) {
-          setSelectedModel(storedModel);
-          if (!PRESET_MODELS.includes(storedModel)) {
-            setUseCustomModel(true);
-            setCustomModel(storedModel);
+
+        // Base URL
+        if (config.base_url) {
+          setBaseUrlInput(config.base_url);
+          setBaseUrlConfigured(true);
+        }
+
+        // Model
+        if (config.model) {
+          setSelectedModel(config.model);
+          setCustomModel(config.model);
+        }
+
+        // 场景模型
+        if (config.small_fast_model) setSmallFastModel(config.small_fast_model);
+        if (config.sonnet_model) setSonnetModel(config.sonnet_model);
+        if (config.opus_model) setOpusModel(config.opus_model);
+        if (config.haiku_model) setHaikuModel(config.haiku_model);
+
+        // 兼容旧配置：如果安全存储中没有，尝试从旧配置迁移
+        if (!config.api_key) {
+          const oldKey = await invoke<string | null>("get_config", { key: "api_key" });
+          if (oldKey) {
+            await invoke("store_api_key", { apiKey: oldKey });
+            const masked =
+              oldKey.length > 8
+                ? oldKey.slice(0, 3) + "..." + oldKey.slice(-4)
+                : "***";
+            setApiKeyMask(masked);
+            setApiKeyConfigured(true);
+            await invoke("set_config", { key: "api_key", value: null });
+            console.log("API Key 已从旧存储迁移到安全存储");
           }
         }
-      } catch {
-        // 非 Tauri 环境或加载失败，静默处理
+      } catch (e) {
+        // 非 Tauri 环境或加载失败
+        console.error("加载 LLM 配置失败:", e);
       }
     };
     void loadSettings();
@@ -169,7 +243,7 @@ export function SettingsPanel() {
     if (!apiKeyInput.trim()) return;
     setApiKeySaving(true);
     try {
-      await invoke("set_config", { key: "api_key", value: apiKeyInput.trim() });
+      await invoke("store_api_key", { apiKey: apiKeyInput.trim() });
       const k = apiKeyInput.trim();
       const masked =
         k.length > 8 ? k.slice(0, 3) + "..." + k.slice(-4) : "***";
@@ -185,12 +259,31 @@ export function SettingsPanel() {
     }
   };
 
-  const saveModel = async (model: string) => {
-    setSelectedModel(model);
+  const saveBaseUrl = async () => {
+    if (!baseUrlInput.trim()) return;
+    setBaseUrlSaving(true);
+    try {
+      await invoke("store_base_url", { url: baseUrlInput.trim() });
+      setBaseUrlConfigured(true);
+      setBaseUrlSaved(true);
+      setTimeout(() => setBaseUrlSaved(false), 2000);
+    } catch (e) {
+      console.error("保存 Base URL 失败", e);
+    } finally {
+      setBaseUrlSaving(false);
+    }
+  };
+
+  const saveModelToSecureStorage = async (model: string) => {
     if (!checkIsTauri()) return;
     try {
-      await invoke("set_config", { key: "selected_model", value: model });
-    } catch { /* ignore parse error */ }
+      await invoke("store_model", { model });
+      setSelectedModel(model);  // 更新 store
+      setCustomModelSaved(true);
+      setTimeout(() => setCustomModelSaved(false), 2000);
+    } catch (e) {
+      console.error("保存模型失败", e);
+    }
   };
 
   // 加载 config.toml
@@ -353,85 +446,191 @@ export function SettingsPanel() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                API Key 通过 Tauri Store 加密存储，仅存在本地设备。
+                API Key 加密存储在系统密钥库（macOS Keychain / Windows Credential Manager / Linux libsecret）。
+              </p>
+            </div>
+          </div>
+
+          {/* Base URL 管理 */}
+          <div className="border-b p-4 space-y-4">
+            <SectionHeader icon={Zap} title="API Base URL（可选）" />
+            <div className="space-y-2">
+              <label className="text-sm text-muted-foreground">
+                {baseUrlConfigured ? "更新 Base URL" : "自定义 API 端点"}
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  value={baseUrlInput}
+                  onChange={(e) => setBaseUrlInput(e.target.value)}
+                  placeholder="https://api.anthropic.com（默认）"
+                  className="font-mono"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveBaseUrl();
+                  }}
+                />
+                <Button
+                  size="sm"
+                  onClick={() => void saveBaseUrl()}
+                  disabled={baseUrlSaving || !baseUrlInput.trim()}
+                  className="shrink-0"
+                >
+                  {baseUrlSaved ? "已保存 ✓" : baseUrlSaving ? "保存中..." : "保存"}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                如使用第三方 API（如 MiniMax、AWS Bedrock 等），可在此设置自定义端点。留空则使用默认 Anthropic 端点。
               </p>
             </div>
           </div>
 
           {/* 模型选择 */}
           <div className="border-b p-4 space-y-4">
-            <SectionHeader icon={Cpu} title="模型选择" />
+            <SectionHeader icon={Cpu} title="模型配置" />
             <div className="space-y-3">
-              <div className="flex gap-2 mb-2">
-                <button
-                  type="button"
-                  className={cn(
-                    "px-3 py-1.5 rounded-md text-sm border transition-colors text-foreground",
-                    !useCustomModel
-                      ? "bg-primary/10 border-primary/30 text-primary"
-                      : "hover:bg-muted/50"
-                  )}
-                  onClick={() => setUseCustomModel(false)}
-                >
-                  预设模型
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    "px-3 py-1.5 rounded-md text-sm border transition-colors text-foreground",
-                    useCustomModel
-                      ? "bg-primary/10 border-primary/30 text-primary"
-                      : "hover:bg-muted/50"
-                  )}
-                  onClick={() => setUseCustomModel(true)}
-                >
-                  自定义模型
-                </button>
-              </div>
-
-              {!useCustomModel && (
-                <div className="space-y-1">
-                  <label className="text-sm text-muted-foreground">选择模型</label>
-                  <Select
-                    value={selectedModel}
-                    onValueChange={(v) => void saveModel(v)}
+              <div className="space-y-1">
+                <label className="text-sm text-muted-foreground">主模型 (ANTHROPIC_MODEL)</label>
+                <div className="flex gap-2">
+                  <Input
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    placeholder="例如: MiniMax-M2.7"
+                    className="font-mono"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && customModel.trim()) {
+                        void saveModelToSecureStorage(customModel.trim());
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={() => customModel.trim() && void saveModelToSecureStorage(customModel.trim())}
+                    disabled={!customModel.trim()}
                   >
-                    <SelectTrigger className="font-mono">
-                      <SelectValue placeholder="选择模型..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PRESET_MODELS.map((m) => (
-                        <SelectItem key={m} value={m} className="font-mono text-sm">
-                          {m}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    {customModelSaved ? "已保存 ✓" : "保存"}
+                  </Button>
                 </div>
-              )}
+                <p className="text-xs text-muted-foreground">
+                  当前模型: <span className="font-mono">{selectedModel || "未设置"}</span>
+                </p>
+              </div>
+            </div>
 
-              {useCustomModel && (
-                <div className="space-y-1">
-                  <label className="text-sm text-muted-foreground">自定义模型名称</label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={customModel}
-                      onChange={(e) => setCustomModel(e.target.value)}
-                      placeholder="输入模型名称"
-                      className="font-mono"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && customModel.trim()) {
-                          void saveModel(customModel.trim());
-                        }
-                      }}
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => customModel.trim() && void saveModel(customModel.trim())}
-                      disabled={!customModel.trim()}
-                    >
-                      保存
-                    </Button>
+            {/* 高级模型配置 */}
+            <div className="mt-4 pt-4 border-t">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setShowAdvancedModels(!showAdvancedModels)}
+              >
+                <span className={"transition-transform " + (showAdvancedModels ? "rotate-90" : "")}>▶</span>
+                高级模型配置
+              </button>
+
+              {showAdvancedModels && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    为不同场景指定不同的模型。留空则使用主模型。
+                  </p>
+
+                  {/* 快速模型 */}
+                  <div className="space-y-1">
+                    <label className="text-sm text-muted-foreground">快速模型 (ANTHROPIC_SMALL_FAST_MODEL)</label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={smallFastModel}
+                        onChange={(e) => setSmallFastModel(e.target.value)}
+                        placeholder="后台任务、简单查询"
+                        className="font-mono text-sm"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && smallFastModel.trim()) {
+                            void saveSceneModel("store_small_fast_model", smallFastModel, setSmallFastModelSaved);
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => saveSceneModel("store_small_fast_model", smallFastModel, setSmallFastModelSaved)}
+                        disabled={!smallFastModel.trim()}
+                      >
+                        {smallFastModelSaved ? "已保存 ✓" : "保存"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Sonnet 模型 */}
+                  <div className="space-y-1">
+                    <label className="text-sm text-muted-foreground">Sonnet 模型 (ANTHROPIC_DEFAULT_SONNET_MODEL)</label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={sonnetModel}
+                        onChange={(e) => setSonnetModel(e.target.value)}
+                        placeholder="当请求 Sonnet 时使用"
+                        className="font-mono text-sm"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && sonnetModel.trim()) {
+                            void saveSceneModel("store_sonnet_model", sonnetModel, setSonnetModelSaved);
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => saveSceneModel("store_sonnet_model", sonnetModel, setSonnetModelSaved)}
+                        disabled={!sonnetModel.trim()}
+                      >
+                        {sonnetModelSaved ? "已保存 ✓" : "保存"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Opus 模型 */}
+                  <div className="space-y-1">
+                    <label className="text-sm text-muted-foreground">Opus 模型 (ANTHROPIC_DEFAULT_OPUS_MODEL)</label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={opusModel}
+                        onChange={(e) => setOpusModel(e.target.value)}
+                        placeholder="当请求 Opus 时使用"
+                        className="font-mono text-sm"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && opusModel.trim()) {
+                            void saveSceneModel("store_opus_model", opusModel, setOpusModelSaved);
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => saveSceneModel("store_opus_model", opusModel, setOpusModelSaved)}
+                        disabled={!opusModel.trim()}
+                      >
+                        {opusModelSaved ? "已保存 ✓" : "保存"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Haiku 模型 */}
+                  <div className="space-y-1">
+                    <label className="text-sm text-muted-foreground">Haiku 模型 (ANTHROPIC_DEFAULT_HAIKU_MODEL)</label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={haikuModel}
+                        onChange={(e) => setHaikuModel(e.target.value)}
+                        placeholder="当请求 Haiku 时使用"
+                        className="font-mono text-sm"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && haikuModel.trim()) {
+                            void saveSceneModel("store_haiku_model", haikuModel, setHaikuModelSaved);
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => saveSceneModel("store_haiku_model", haikuModel, setHaikuModelSaved)}
+                        disabled={!haikuModel.trim()}
+                      >
+                        {haikuModelSaved ? "已保存 ✓" : "保存"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}

@@ -2,8 +2,8 @@
 
 ## ✅ 仓库已创建成功
 
-**仓库地址**: https://github.com/not-yes/config-sync-hub  
-**组织名称**: `laozheng`  
+**仓库地址**: https://github.com/not-yes/config-sync-hub
+**组织名称**: `laozheng`
 **仓库类型**: 私有仓库
 
 ---
@@ -254,5 +254,5 @@ git push
 
 ---
 
-**创建时间**: 2026-04-13  
+**创建时间**: 2026-04-13
 **创建者**: not-yes (aaronwang123321)

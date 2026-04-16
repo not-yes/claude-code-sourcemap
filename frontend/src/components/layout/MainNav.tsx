@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
 import { WindowControls } from "./WindowControls";
-import { BarChart3, Bot, Clock, Settings, Bug, Moon, Sun, BookMarked, FolderOpen } from "lucide-react";
+import { BarChart3, Bot, Clock, Settings, Bug, Moon, Sun, BookMarked } from "lucide-react";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { useState, useEffect } from "react";
 import type { NavPanel } from "@/stores/appStore";
@@ -17,7 +17,6 @@ import { useLogStore } from "@/stores/logStore";
 import { getMemoryMetrics, formatMemoryMetrics, type MemoryMetrics } from "@/lib/memoryMonitor";
 
 const NAV_ITEMS: { key: NavPanel; icon: typeof Bot }[] = [
-  { key: "workspace", icon: FolderOpen },
   { key: "agents", icon: Bot },
   { key: "cron", icon: Clock },
   { key: "skills", icon: BookMarked },
@@ -64,9 +63,7 @@ export function MainNav() {
                 : "text-muted-foreground hover:bg-muted/70 dark:hover:bg-muted/40 hover:scale-105"
             )}
             title={
-              key === "workspace"
-                ? "工作目录"
-                : key === "stats"
+              key === "stats"
                 ? "任务统计"
                 : key === "agents"
                 ? "Agents"

@@ -1,6 +1,7 @@
 mod agent;
 mod plugins;
 mod sync;
+mod secure_storage;
 
 use agent::AgentManager;
 use plugins::mac_rounded_corners;
@@ -260,8 +261,8 @@ async fn get_claude_config(
     config_name: String,
 ) -> Result<String, String> {
     let relative_path = match config_name.as_str() {
-        "config" => ".claude/config.toml",
-        "approvals" => ".claude/exec-approvals.json",
+        "config" => ".claude-desktop/config.toml",
+        "approvals" => ".claude-desktop/exec-approvals.json",
         _ => return Err(format!("Unknown config: {}", config_name)),
     };
 
@@ -291,8 +292,8 @@ async fn save_claude_config(
     content: String,
 ) -> Result<(), String> {
     let relative_path = match config_name.as_str() {
-        "config" => ".claude/config.toml",
-        "approvals" => ".claude/exec-approvals.json",
+        "config" => ".claude-desktop/config.toml",
+        "approvals" => ".claude-desktop/exec-approvals.json",
         _ => return Err(format!("Unknown config: {}", config_name)),
     };
 
@@ -418,6 +419,12 @@ pub fn run() {
   let agent_manager = Arc::new(AgentManager::new());
 
   tauri::Builder::default()
+    .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+      let _ = app
+        .get_webview_window("main")
+        .expect("no main window")
+        .set_focus();
+    }))
     .plugin(tauri_plugin_shell::init())
     .plugin(tauri_plugin_store::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
@@ -444,7 +451,42 @@ pub fn run() {
       get_claude_config,
       save_claude_config,
       sync::sync_config_pull,
-      sync::sync_config_push,
+      // 安全存储命令
+      secure_storage::secure_store_set,
+      secure_storage::secure_store_get,
+      secure_storage::secure_store_delete,
+      // LLM 配置
+      secure_storage::store_api_key,
+      secure_storage::get_api_key,
+      secure_storage::delete_api_key,
+      secure_storage::store_base_url,
+      secure_storage::get_base_url,
+      secure_storage::delete_base_url,
+      secure_storage::store_model,
+      secure_storage::get_model,
+      secure_storage::delete_model,
+      // 场景模型
+      secure_storage::store_small_fast_model,
+      secure_storage::get_small_fast_model,
+      secure_storage::store_sonnet_model,
+      secure_storage::get_sonnet_model,
+      secure_storage::store_opus_model,
+      secure_storage::get_opus_model,
+      secure_storage::store_haiku_model,
+      secure_storage::get_haiku_model,
+      secure_storage::get_llm_config,
+      secure_storage::store_llm_config,
+      // GitHub Token
+      secure_storage::store_github_token,
+      secure_storage::get_github_token,
+      secure_storage::delete_github_token,
+      // 同步用户名
+      secure_storage::store_sync_username,
+      secure_storage::get_sync_username,
+      secure_storage::delete_sync_username,
+      // 批量同步配置
+      secure_storage::get_sync_config,
+      secure_storage::store_sync_config,
     ])
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -481,6 +523,15 @@ pub fn run() {
           .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)  // 使用本地时区（北京时间）
           .build(),
       )?;
+
+      // 预加载安全存储缓存（确保整个应用生命周期内只访问 1 次 Keychain）
+      log::info!("应用启动：预加载安全存储缓存...");
+      if let Err(e) = secure_storage::preload_cache() {
+        log::warn!("预加载安全存储缓存失败: {}", e);
+      } else {
+        log::info!("安全存储缓存预加载成功");
+      }
+
       Ok(())
     })
     .run(tauri::generate_context!())
