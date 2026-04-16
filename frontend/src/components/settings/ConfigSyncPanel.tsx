@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { GithubIcon, Download, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, KeyRound, History, ChevronRight } from "lucide-react";
+import { Github, Download, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, KeyRound, History, ChevronRight } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
@@ -28,6 +28,7 @@ interface SyncHistoryItem {
   status: "success" | "error";
   message: string;
   details?: string[];
+  expanded?: boolean;
 }
 
 function getErrorHint(error: string): { hint: string; suggestions: string[] } {
@@ -100,7 +101,6 @@ export function ConfigSyncPanel() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [history, setHistory] = useState<SyncHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [expandedError, setExpandedError] = useState(false);
 
   // 进度步骤
   const progressSteps = [
@@ -129,11 +129,12 @@ export function ConfigSyncPanel() {
   }, []);
 
   // 保存历史记录
-  const addHistory = (item: Omit<SyncHistoryItem, "id" | "time">) => {
+  const addHistory = (item: Omit<SyncHistoryItem, "id" | "time" | "expanded">) => {
     const newItem: SyncHistoryItem = {
       ...item,
       id: Date.now().toString(),
-      time: new Date().toLocaleString("zh-CN")
+      time: new Date().toLocaleString("zh-CN"),
+      expanded: false
     };
     const updated = [newItem, ...history].slice(0, 10);
     setHistory(updated);
@@ -209,7 +210,6 @@ export function ConfigSyncPanel() {
 
     setLoading(true);
     setMessage(null);
-    setExpandedError(false);
     setSyncProgress(progressSteps[0].text);
 
     // 模拟进度动画
@@ -273,7 +273,7 @@ export function ConfigSyncPanel() {
 
       {/* 仓库配置 */}
       <div className="border-b p-4 space-y-4">
-        <SectionHeader icon={GithubIcon} title="仓库配置" />
+        <SectionHeader icon={Github} title="仓库配置" />
 
         <div className="space-y-2">
           <label className="text-sm text-muted-foreground">GitHub 仓库地址</label>
@@ -377,11 +377,6 @@ export function ConfigSyncPanel() {
               <Loader2 className="w-3 h-3 animate-spin text-primary" />
               {syncProgress}
             </p>
-            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-primary rounded-full animate-pulse transition-all duration-300"
-                style={{ width: "100%" }}
-              />
-            </div>
           </div>
         )}
 
@@ -400,28 +395,16 @@ export function ConfigSyncPanel() {
                 {message.text}
               </p>
 
-              {/* 错误详情 - 展开查看 */}
-              {message.type === "error" && history.length > 0 && (
-                <>
-                  <button
-                    onClick={() => setExpandedError(!expandedError)}
-                    className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 mt-2 flex items-center gap-1"
-                  >
-                    <ChevronRight size={14} className={`transition-transform ${expandedError ? "rotate-90" : ""}`} />
-                    {expandedError ? "收起详情" : "查看解决方案"}
-                  </button>
-
-                  {expandedError && history[0]?.details && (
-                    <ul className="mt-2 space-y-1">
-                      {history[0].details.map((suggestion, i) => (
-                        <li key={i} className="text-xs text-red-700 dark:text-red-300 flex items-start gap-1.5">
-                          <span className="text-red-400">•</span>
-                          {suggestion}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
+              {/* 错误详情 */}
+              {message.type === "error" && history[0]?.details && (
+                <ul className="mt-2 space-y-1">
+                  {history[0].details.map((suggestion, i) => (
+                    <li key={i} className="text-xs text-red-700 dark:text-red-300 flex items-start gap-1.5">
+                      <span className="text-red-400">•</span>
+                      {suggestion}
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           </div>
@@ -475,11 +458,28 @@ export function ConfigSyncPanel() {
                       <p className={item.status === "success" ? "text-green-800 dark:text-green-200" : "text-red-800 dark:text-red-200"}>
                         {item.message}
                       </p>
-                      <span className="text-xs text-muted-foreground shrink-0">
-                        {item.time}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {item.details && (
+                          <button
+                            onClick={() => {
+                              const updated = history.map(h =>
+                                h.id === item.id ? { ...h, expanded: !h.expanded } : h
+                              );
+                              setHistory(updated);
+                              localStorage.setItem("config-sync-history", JSON.stringify(updated));
+                            }}
+                            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                          >
+                            <ChevronRight size={12} className={`transition-transform ${item.expanded ? "rotate-90" : ""}`} />
+                            {item.expanded ? "收起" : "详情"}
+                          </button>
+                        )}
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {item.time}
+                        </span>
+                      </div>
                     </div>
-                    {expandedError && item.details && (
+                    {item.expanded && item.details && (
                       <ul className="mt-1.5 space-y-0.5">
                         {item.details.map((detail, i) => (
                           <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
