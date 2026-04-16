@@ -291,16 +291,30 @@ impl AgentManager {
         // 因此将 prepare_start 返回的 rx drop 掉（不用），改用下面独立的 oneshot channel
         let _unused_ready_rx = lifecycle.prepare_start().await;
 
-        // 3. 从安全存储读取 LLM 配置（优先级高于 settings.json）
-        // 这些值会在 Sidecar 启动时注入环境变量，覆盖 settings.json 中的同名配置
-        let api_key = crate::secure_storage::get_api_key_sync().ok().flatten();
-        let base_url = crate::secure_storage::get_base_url_sync().ok().flatten();
-        // 模型配置（5个字段）
-        let model = crate::secure_storage::get_model_sync().ok().flatten();
-        let small_fast_model = crate::secure_storage::get_small_fast_model_sync().ok().flatten();
-        let sonnet_model = crate::secure_storage::get_sonnet_model_sync().ok().flatten();
-        let opus_model = crate::secure_storage::get_opus_model_sync().ok().flatten();
-        let haiku_model = crate::secure_storage::get_haiku_model_sync().ok().flatten();
+        // 3. 从 settings.json 读取 LLM 配置（主数据源）
+        // 如果 settings.json 不存在或缺少配置，才从 Keychain 读取（备用）
+        let (settings_key, settings_base_url, settings_models) =
+            process::read_settings_env().unwrap_or_else(|| {
+                (None, None, std::collections::HashMap::new())
+            });
+
+        // Keychain 备用
+        let keychain_key = crate::secure_storage::get_api_key_sync().ok().flatten();
+        let keychain_base_url = crate::secure_storage::get_base_url_sync().ok().flatten();
+        let keychain_model = crate::secure_storage::get_model_sync().ok().flatten();
+        let keychain_small_fast = crate::secure_storage::get_small_fast_model_sync().ok().flatten();
+        let keychain_sonnet = crate::secure_storage::get_sonnet_model_sync().ok().flatten();
+        let keychain_opus = crate::secure_storage::get_opus_model_sync().ok().flatten();
+        let keychain_haiku = crate::secure_storage::get_haiku_model_sync().ok().flatten();
+
+        // 优先级：settings.json > Keychain
+        let api_key = settings_key.clone().or(keychain_key);
+        let base_url = settings_base_url.clone().or(keychain_base_url);
+        let model = settings_models.get("ANTHROPIC_MODEL").cloned().or(keychain_model);
+        let small_fast_model = settings_models.get("ANTHROPIC_SMALL_FAST_MODEL").cloned().or(keychain_small_fast);
+        let sonnet_model = settings_models.get("ANTHROPIC_DEFAULT_SONNET_MODEL").cloned().or(keychain_sonnet);
+        let opus_model = settings_models.get("ANTHROPIC_DEFAULT_OPUS_MODEL").cloned().or(keychain_opus);
+        let haiku_model = settings_models.get("ANTHROPIC_DEFAULT_HAIKU_MODEL").cloned().or(keychain_haiku);
 
         // 记录配置来源
         if let Some(ref key) = api_key {
@@ -309,25 +323,12 @@ impl AgentManager {
             } else {
                 "***".to_string()
             };
-            log::info!("AgentManager: 从安全存储读取 API Key: {}", masked);
+            log::info!("AgentManager: API Key: {} (source: {})", masked,
+                if settings_key.is_some() { "settings.json" } else { "Keychain" });
         }
         if let Some(ref url) = base_url {
-            log::info!("AgentManager: 从安全存储读取 Base URL: {}", url);
-        }
-        if let Some(ref m) = model {
-            log::info!("AgentManager: 从安全存储读取主模型: {}", m);
-        }
-        if let Some(ref m) = small_fast_model {
-            log::info!("AgentManager: 从安全存储读取快速模型: {}", m);
-        }
-        if let Some(ref m) = sonnet_model {
-            log::info!("AgentManager: 从安全存储读取 Sonnet 模型: {}", m);
-        }
-        if let Some(ref m) = opus_model {
-            log::info!("AgentManager: 从安全存储读取 Opus 模型: {}", m);
-        }
-        if let Some(ref m) = haiku_model {
-            log::info!("AgentManager: 从安全存储读取 Haiku 模型: {}", m);
+            log::info!("AgentManager: Base URL: {} (source: {})", url,
+                if settings_base_url.is_some() { "settings.json" } else { "Keychain" });
         }
 
         // 4. 构建环境变量列表（使用 owned 类型避免生命周期问题）

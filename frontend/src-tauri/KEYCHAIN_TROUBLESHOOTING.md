@@ -23,7 +23,7 @@ fn get_cached_secrets() -> Result<Vec<SecretEntry>, String> {
             return Ok(secrets.clone());  // 已缓存，0 次 Keychain 访问
         }
     }
-    
+
     // 只有首次加载时访问 Keychain
     load_secrets_to_cache()?;  // 1 次 Keychain 访问
     ...

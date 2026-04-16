@@ -6,13 +6,51 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 
 /// 展开路径中的 ~ 符号
-fn expand_home(path: &str) -> String {
+pub fn expand_home(path: &str) -> String {
     if path.starts_with("~/") {
         if let Some(home) = dirs_next::home_dir() {
             return home.join(&path[2..]).to_string_lossy().to_string();
         }
     }
     path.to_string()
+}
+
+/// 从 settings.json 读取 env 配置
+/// 返回 (api_key, base_url, 模型配置)，都是 Option
+pub fn read_settings_env() -> Option<(Option<String>, Option<String>, std::collections::HashMap<String, String>)> {
+    let settings_path = expand_home("~/.claude-desktop/settings.json");
+    let content = std::fs::read_to_string(&settings_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    let env = json.get("env")?.as_object()?;
+
+    let api_key = env.get("ANTHROPIC_AUTH_TOKEN")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| {
+            env.get("ANTHROPIC_API_KEY")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        });
+
+    let base_url = env.get("ANTHROPIC_BASE_URL")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+
+    let mut models = std::collections::HashMap::new();
+    for (key, value) in env {
+        if let Some(s) = value.as_str().filter(|v| !v.is_empty()) {
+            match key.as_str() {
+                "ANTHROPIC_MODEL" | "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY" | "ANTHROPIC_BASE_URL" => {}
+                _ => { models.insert(key.clone(), s.to_string()); }
+            }
+        }
+    }
+
+    Some((api_key, base_url, models))
 }
 
 /// 解析 sidecar 二进制路径

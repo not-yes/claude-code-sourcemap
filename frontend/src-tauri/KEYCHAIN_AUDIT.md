@@ -1,7 +1,7 @@
 # 🔐 Keychain 访问审计报告
 
-**审计日期**: 2026-04-15  
-**审计范围**: 所有配置的 Keychain 访问情况  
+**审计日期**: 2026-04-15
+**审计范围**: 所有配置的 Keychain 访问情况
 **审计结论**: ✅ **所有配置只需要输入 1 次登录密码**
 
 ---
@@ -74,10 +74,10 @@ fn get_cached_secrets() -> Result<Vec<SecretEntry>, String> {
             return Ok(secrets.clone());  // 已缓存，0 次 Keychain 访问
         }
     }
-    
+
     // 需要初始化，获取写锁（此时可能其他线程已完成初始化）
     load_secrets_to_cache()?;  // 只有这里访问 Keychain
-    
+
     let cache = get_secrets_cache();
     let guard = cache.read().map_err(|e| format!("获取缓存读锁失败: {}", e))?;
     Ok(guard.clone().unwrap_or_default())
@@ -135,9 +135,9 @@ get_cached_secrets()  ← 从缓存读取，0 次 Keychain 访问
 ```typescript
 useEffect(() => {
     const loadCredentials = async () => {
-        const config = await invoke<{ 
-            username: string | null; 
-            github_token: string | null 
+        const config = await invoke<{
+            username: string | null;
+            github_token: string | null
         }>("get_sync_config");
         if (config.username) setUsername(config.username);
         if (config.github_token) setToken(config.github_token);
@@ -172,18 +172,18 @@ get_cached_secrets()  ← 从缓存读取，0 次 Keychain 访问
 #[command]
 pub async fn store_llm_config(config: LlmConfig) -> Result<(), String> {
     log::info!("store_llm_config: 开始批量保存配置");
-    
+
     // 从缓存获取
     let mut secrets = get_cached_secrets()?;  // ← 从缓存读取
-    
+
     // 更新缓存中的所有字段
     update_or_add(&mut secrets, KEY_API_KEY, config.api_key.as_ref());
     update_or_add(&mut secrets, KEY_BASE_URL, config.base_url.as_ref());
     // ... 其他字段
-    
+
     // 更新缓存并写入 keychain
     update_cached_secrets(secrets)?;  // ← 只有这里写入 Keychain
-    
+
     log::info!("store_llm_config: 批量保存完成");
     Ok(())
 }
@@ -329,7 +329,7 @@ cd frontend/src-tauri
 
 **问题**: 多线程并发调用 `get_cached_secrets()` 可能重复访问 Keychain
 
-**修复**: 
+**修复**:
 ```rust
 fn get_cached_secrets() -> Result<Vec<SecretEntry>, String> {
     // 快速路径：检查缓存
@@ -340,7 +340,7 @@ fn get_cached_secrets() -> Result<Vec<SecretEntry>, String> {
             return Ok(secrets.clone());  // 已缓存，直接返回
         }
     }
-    
+
     // load_secrets_to_cache 内部有二次检查
     load_secrets_to_cache()?;  // if guard.is_some() { return Ok(()); }
     ...
@@ -406,6 +406,6 @@ fn get_cached_secrets() -> Result<Vec<SecretEntry>, String> {
 - [x] 无废弃函数调用
 - [x] 日志输出正确
 
-**审计人**: AI Assistant  
-**审计日期**: 2026-04-15  
+**审计人**: AI Assistant
+**审计日期**: 2026-04-15
 **审计结果**: ✅ **通过**
