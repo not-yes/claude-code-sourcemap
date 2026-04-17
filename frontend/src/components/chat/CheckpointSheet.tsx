@@ -586,10 +586,23 @@ export function CheckpointSheet({
     const ids = [...batchSelected];
     if (ids.length === 0) return;
     try {
-      await batchDeleteCheckpoints({ sessionId, checkpointIds: ids }, agentId);
-      toast.success("已提交批量删除");
-      setBatchSelected(new Set());
-      setBatchMode(false);
+      const results = await batchDeleteCheckpoints({ sessionId, checkpointIds: ids }, agentId);
+      const successIds = new Set(results.filter((r) => r.success).map((r) => r.checkpoint_id));
+      const failures = results.filter((r) => !r.success);
+      if (failures.length === 0) {
+        toast.success(`已删除 ${ids.length} 个 checkpoint`);
+      } else {
+        const details = failures
+          .map((f) => `${f.checkpoint_id.slice(0, 8)}…: ${f.error ?? "未知错误"}`)
+          .join("\n");
+        toast.error(`部分删除失败（${failures.length}/${ids.length}）\n${details}`);
+      }
+      // 仅移除成功的项；若全部成功则清空并退出多选模式
+      const nextSelected = new Set(ids.filter((id) => !successIds.has(id)));
+      setBatchSelected(nextSelected);
+      if (nextSelected.size === 0) {
+        setBatchMode(false);
+      }
       await loadList();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "批量删除失败");

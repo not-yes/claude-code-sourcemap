@@ -121,6 +121,11 @@ export interface AgentCore {
   restoreMessages(messages: any[]): void
 
   /**
+   * 将指定会话的消息状态持久化到存储层。
+   */
+  persistSession(sessionId: string, messages: unknown[]): Promise<void>
+
+  /**
    * 使 agent 缓存失效（下次 execute 时重新加载）。
    * @param agentId 指定 agent ID，不传则清除所有
    */
@@ -884,6 +889,17 @@ class AgentCoreImpl implements AgentCore {
   restoreMessages(messages: any[]): void {
     this.messageHistory = [...messages]
     this.log('info', 'Messages restored', { count: messages.length })
+  }
+
+  async persistSession(sessionId: string, messages: unknown[]): Promise<void> {
+    if (!this.sessionStorage) return
+    const existing = await this.sessionStorage.loadSession(sessionId).catch(() => null)
+    const now = new Date().toISOString()
+    const metadata = existing
+      ? { ...existing.metadata, messageCount: messages.length, updatedAt: now }
+      : { id: sessionId, createdAt: now, updatedAt: now, messageCount: messages.length }
+    await this.sessionStorage.saveSession(sessionId, { metadata, messages })
+    this.log('info', 'Session persisted after rollback', { sessionId, messageCount: messages.length })
   }
 
   invalidateAgentCache(agentId?: string): void {

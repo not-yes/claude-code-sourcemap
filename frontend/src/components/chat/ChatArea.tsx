@@ -43,6 +43,7 @@ import {
   MessageSquarePlus,
   History,
   GitBranch,
+  MoreVertical,
   StopCircle,
   ChevronUp,
   Bot,
@@ -53,6 +54,12 @@ import { useAgentsStore } from "@/stores/agentsStore";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkingDirectorySelector } from "./WorkingDirectorySelector";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 function sessionMessageToMessage(m: SessionMessage, index: number): Message {
   return {
@@ -182,27 +189,40 @@ export function ChatArea({ agentId }: ChatAreaProps) {
         </button>
         <button
           type="button"
-          onClick={() => setCheckpointSheetOpen(true)}
-          disabled={!activeBackendSessionId || loading}
-          title={
-            !activeBackendSessionId
-              ? "需要已绑定后端会话（从历史选择或重开后自动恢复）后再使用 Checkpoint"
-              : loading
-              ? "任务进行中，请稍后再操作 Checkpoint"
-              : "Checkpoint（保存 / 回滚 / 时间线）"
-          }
-          className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-lg transition-all duration-200 hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
-        >
-          <GitBranch className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
           onClick={handleNewChat}
           title="新建对话"
           className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-lg transition-all duration-200 hover:scale-105"
         >
           <MessageSquarePlus className="h-4 w-4" />
         </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={!activeBackendSessionId || loading}
+              title={
+                !activeBackendSessionId
+                  ? "需要已绑定后端会话后再使用更多操作"
+                  : loading
+                  ? "任务进行中，请稍后再操作"
+                  : "更多操作"
+              }
+              className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-lg transition-all duration-200 hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[10rem]">
+            <DropdownMenuItem
+              onClick={() => setCheckpointSheetOpen(true)}
+              disabled={!activeBackendSessionId || loading}
+              className="gap-2"
+            >
+              <GitBranch className="h-4 w-4" />
+              <span>Checkpoint</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     );
     return () => setChatHeaderAction(null);

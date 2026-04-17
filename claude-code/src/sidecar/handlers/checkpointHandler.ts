@@ -21,6 +21,7 @@ import { z } from 'zod'
 import { homedir } from 'os'
 import { mkdir, readFile, writeFile, readdir, unlink } from 'fs/promises'
 import { join } from 'path'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import type { JsonRpcServer } from '../jsonRpcServer'
 
 // ─── 内部存储类型定义 ───────────────────────────────────────────────────────────
@@ -168,6 +169,18 @@ const BatchDeleteCheckpointsParamsSchema = z.object({
   checkpointIds: z.array(z.string()).min(1, '至少提供一个 Checkpoint ID'),
 })
 
+/** 导入数据校验 Schema */
+const CheckpointDataSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  tag: z.string(),
+  comment: z.string().optional(),
+  createdAt: z.string(),
+  messageIndex: z.number().int().nonnegative(),
+  messages: z.array(z.unknown()).max(10_000, '消息数量超过 10000 条，拒绝导入'),
+  metadata: z.record(z.unknown()).optional(),
+})
+
 // ─── 文件系统工具函数 ──────────────────────────────────────────────────────────
 
 /**
@@ -300,7 +313,7 @@ export function registerCheckpointHandlers(server: JsonRpcServer): void {
       try {
         const session = await agentCore.getSession(sessionId)
         if (session) {
-          messages = session.messages ?? []
+          messages = JSON.parse(JSON.stringify(session.messages ?? []))
         }
       } catch {
         // 无法获取消息时，保存空快照
@@ -332,6 +345,13 @@ export function registerCheckpointHandlers(server: JsonRpcServer): void {
 
       await writeCheckpoint(checkpoint)
 
+      // 通知前端刷新
+      try {
+        await server.sendNotification('$/checkpoint', { sessionId, type: 'saved', checkpointId: checkpoint.id })
+      } catch {
+        // 忽略通知发送失败
+      }
+
       return {
         checkpoint_id: checkpoint.id,
         tag: checkpoint.tag,
@@ -361,6 +381,12 @@ export function registerCheckpointHandlers(server: JsonRpcServer): void {
           // checkpoint 没有消息数据时，回退到重置
           agentCore.resetConversation()
         }
+        // 将回滚后的状态持久化到 sessionStorage
+        await agentCore.persistSession(sessionId, checkpoint.messages ?? [])
+        // 通知前端刷新
+        try {
+          await server.sendNotification('$/checkpoint', { sessionId, type: 'rolled_back', checkpointId: checkpoint.id })
+        } catch {}
         return {
           checkpoint_id: checkpoint.id,
           step: checkpoint.messageIndex,
@@ -480,22 +506,32 @@ export function registerCheckpointHandlers(server: JsonRpcServer): void {
     async (params: unknown): Promise<ImportCheckpointResult> => {
       const { jsonData } = ImportCheckpointParamsSchema.parse(params)
 
-      let imported: Checkpoint
+      let raw: unknown
       try {
-        imported = JSON.parse(jsonData) as Checkpoint
+        raw = JSON.parse(jsonData)
       } catch {
         throw new Error('导入数据格式无效：不是有效的 JSON')
+      }
+
+      const parsed = CheckpointDataSchema.safeParse(raw)
+      if (!parsed.success) {
+        throw new Error(`导入数据校验失败：${parsed.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join('; ')}`)
       }
 
       // 生成新 ID（避免冲突）
       const { randomUUID } = await import('crypto')
       const checkpoint: Checkpoint = {
-        ...imported,
+        ...parsed.data,
         id: randomUUID(),
         createdAt: new Date().toISOString(),
       }
 
       await writeCheckpoint(checkpoint)
+
+      // 通知前端刷新
+      try {
+        await server.sendNotification('$/checkpoint', { sessionId: checkpoint.sessionId, type: 'imported', checkpointId: checkpoint.id })
+      } catch {}
 
       return {
         task_id: checkpoint.sessionId,
@@ -528,6 +564,12 @@ export function registerCheckpointHandlers(server: JsonRpcServer): void {
           })
         }
       }
+
+      // 通知前端刷新
+      const successCount = results.filter(r => r.success).length
+      try {
+        await server.sendNotification('$/checkpoint', { sessionId, type: 'deleted', count: successCount })
+      } catch {}
 
       return results
     },
