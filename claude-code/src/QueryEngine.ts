@@ -81,6 +81,7 @@ import {
   shouldEnableThinkingByDefault,
   type ThinkingConfig,
 } from './utils/thinking.js'
+import type { AgentId } from './types/ids.js'
 
 // Lazy: MessageSelector.tsx pulls React/ink; only needed for message filtering at query time
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -149,6 +150,7 @@ export type QueryEngineConfig = {
   jsonSchema?: Record<string, unknown>
   verbose?: boolean
   replayUserMessages?: boolean
+  agentId?: string
   /** Handler for URL elicitations triggered by MCP tool -32042 errors. */
   handleElicitation?: ToolUseContext['handleElicitation']
   includePartialMessages?: boolean
@@ -334,6 +336,7 @@ export class QueryEngine {
 
     let processUserInputContext: ProcessUserInputContext = {
       messages: this.mutableMessages,
+      agentId: this.config.agentId as AgentId | undefined,
       // Slash commands that mutate the message array (e.g. /force-snip)
       // call setMessages(fn).  In interactive mode this writes back to
       // AppState; in print mode we write back to mutableMessages so the

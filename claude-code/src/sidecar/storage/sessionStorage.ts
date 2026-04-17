@@ -16,15 +16,16 @@
  * - 所有 I/O 方法均为幂等操作，失败时不抛出异常而是返回空值
  */
 
-import { homedir } from 'os'
 import { join } from 'path'
 import { mkdir, readFile, writeFile, readdir, unlink, rm, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────────
 
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+
 function getStorageDir(): string {
-  return join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), '.claude', 'sessions')
+  return join(getClaudeConfigHomeDir(), 'sessions')
 }
 
 const STORAGE_DIR = getStorageDir()

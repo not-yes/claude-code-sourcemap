@@ -28,6 +28,11 @@ globalThis.MACRO = globalThis.MACRO ?? {
   USER_TYPE: '',
 }
 
+// 标识当前为桌面 sidecar 模式，使 auth.ts 等模块能识别并由宿主（Rust）管理凭证，
+// 避免 sidecar 自身回退到 macOS keychain 触发额外的密码弹窗。
+// 必须在任何可能访问 keychain 的模块 import 之前设置。
+process.env.CLAUDE_CODE_ENTRYPOINT = 'claude-desktop'
+
 // ─── bun:bundle feature 垫片 ────────────────────────────────────────────────────
 // feature() 是 bun:bundle 的条件编译函数
 // Sidecar 模式下选择性启用必要的特性门控
@@ -378,10 +383,10 @@ async function main(): Promise<void> {
   cronScheduler = new SidecarCronScheduler({
     readJobs,
     writeJobs,
-    executeJob: async (jobId: string, jobName: string, instruction: string) => {
-      log('INFO', `调度器触发任务: ${jobName} (${jobId})`)
+    executeJob: async (jobId: string, jobName: string, instruction: string, agentId?: string) => {
+      log('INFO', `调度器触发任务: ${jobName} (${jobId}) agentId=${agentId ?? 'main'}`)
       try {
-        const generator = agentCore.execute(instruction)
+        const generator = agentCore.execute(instruction, { agentId: agentId ?? 'main' })
         // 消费 generator 直至完成（调度器自己管理 run_count/lastRunAt）
         for await (const _event of generator) {
           // 忽略流事件，仅等待执行完成
