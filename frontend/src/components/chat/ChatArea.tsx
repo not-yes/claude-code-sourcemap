@@ -145,6 +145,9 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     if (isCwdChanged) {
       bumpChatHistoryReload();
     }
+
+    // 标记当前 agent+cwd 为已读
+    useUnreadStore.getState().markAsSeen(agentId, currentCwd);
   }, [agentId, currentCwd, bumpChatHistoryReload]);
 
   // 权限状态

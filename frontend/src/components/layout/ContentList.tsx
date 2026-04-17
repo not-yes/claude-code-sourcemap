@@ -459,10 +459,10 @@ export function ContentList() {
               onClick={() => {
                 setSelectedAgent("main");
                 setAgentDetailViewId(null);
-                markAsSeen("main");
+                markAsSeen("main", agentWorkingDirectory["main"] || workingDirectories[0] || "");
               }}
               onAvatarClick={() => setAgentInfoDialogOpenId("main")}
-              unreadCount={getUnreadCount("main")}
+              unreadCount={getUnreadCount("main", agentWorkingDirectory["main"] || workingDirectories[0] || "")}
               isRunning={isAgentRunning("main")}
             />
             {agentsError && !agentsLoading && (
@@ -496,7 +496,7 @@ export function ContentList() {
               onClick={() => {
                 setSelectedAgent(a.id);
                 setAgentDetailViewId(null);
-                markAsSeen(a.id);
+                markAsSeen(a.id, agentWorkingDirectory[a.id] || workingDirectories[0] || "");
                 // 预启动 Agent（非阻塞，失败不影响选择）
                 // 优先使用 per-agent 保存的工作目录
                 ensureAgent(a.id, useAppStore.getState().agentWorkingDirectory[a.id] || workingDirectories[0] || "")
@@ -512,7 +512,7 @@ export function ContentList() {
                 setAgentDetailViewId(a.id);
               }}
               agentAvatar={<AgentAvatar agentId={a.id} name={a.name} />}
-              unreadCount={getUnreadCount(a.id)}
+              unreadCount={getUnreadCount(a.id, agentWorkingDirectory[a.id] || workingDirectories[0] || "")}
               isRunning={isAgentRunning(a.id)}
             />
                 );
