@@ -101,8 +101,13 @@ export function WorkingDirectorySelector({ agentId }: WorkingDirectorySelectorPr
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         toast.error(`切换工作目录失败：${msg}`);
-        // 回滚到之前的目录
+        // 回滚到之前的目录，并尝试重启旧 agent
         if (currentDir) {
+          try {
+            await ensureAgent(agentId, currentDir);
+          } catch (restartErr) {
+            console.warn("回滚重启旧 agent 失败:", restartErr);
+          }
           setAgentWorkingDirectory(agentId, currentDir);
         }
       } finally {

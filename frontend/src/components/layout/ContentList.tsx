@@ -286,6 +286,7 @@ export function ContentList() {
   const setSelectedAgent = useAppStore((s) => s.setSelectedAgent);
   const setAgentDetailViewId = useAppStore((s) => s.setAgentDetailViewId);
   const workingDirectories = useAppStore((s) => s.workingDirectories);
+  const agentWorkingDirectory = useAppStore((s) => s.agentWorkingDirectory);
   const setSelectedCron = useAppStore((s) => s.setSelectedCron);
   const setSelectedSkill = useAppStore((s) => s.setSelectedSkill);
   const setSelectedSettingsCategory = useAppStore(
@@ -342,11 +343,11 @@ export function ContentList() {
     }
   }, [activeNav, selectedAgentId, setSelectedAgent]);
 
-  // 当 agents 列表变化时，并发加载每个 agent 的最近会话摘要
+  // 当 agents 列表或工作目录变化时，并发加载每个 agent 的最近会话摘要
   useEffect(() => {
     if (agentsLoading || agents.length === 0) return;
-    // 用 agent ids 的 join 字符串作为缓存键，避免重复加载相同列表
-    const cacheKey = agents.map((a) => a.id).join(",");
+    // 用 agent ids + cwd 的 join 字符串作为缓存键，避免重复加载相同列表
+    const cacheKey = agents.map((a) => `${a.id}:${agentWorkingDirectory[a.id] || workingDirectories[0] || ""}`).join(",");
     if (summaryLoadedForRef.current === cacheKey) return;
     summaryLoadedForRef.current = cacheKey;
 
@@ -374,7 +375,7 @@ export function ContentList() {
     };
 
     loadSummaries();
-  }, [agents, agentsLoading]);
+  }, [agents, agentsLoading, agentWorkingDirectory, workingDirectories]);
 
   // Auto-select first settings category when switching to settings
   useEffect(() => {
