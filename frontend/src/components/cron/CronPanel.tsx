@@ -6,6 +6,7 @@ import {
   type CronHistoryItem,
 } from "@/api/tauri-api";
 import { useCronStore } from "@/stores/cronStore";
+import { useAgents } from "@/hooks/useAgents";
 import { Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +45,7 @@ export function CronPanel() {
   const setSelectedCron = useAppStore((s) => s.setSelectedCron);
   const historyCronId = useAppStore((s) => s.historyCronId);
   const setHistoryCronId = useAppStore((s) => s.setHistoryCronId);
+  const selectedAgentId = useAppStore((s) => s.selectedAgentId);
 
   const { jobs, loading, error, reload, initCronListener } = useCronStore();
 
@@ -52,9 +54,12 @@ export function CronPanel() {
   const [addSchedule, setAddSchedule] = useState("");
   const [addScheduleType, setAddScheduleType] = useState<"cron" | "at" | "every">("cron");
   const [addInstruction, setAddInstruction] = useState("");
+  const [addAgentId, setAddAgentId] = useState(selectedAgentId ?? "main");
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [history, setHistory] = useState<CronHistoryItem[]>([]);
+
+  const { agents } = useAgents();
 
   // 注册 Cron 完成事件监听器
   useEffect(() => {
@@ -71,6 +76,7 @@ export function CronPanel() {
   const [editSchedule, setEditSchedule] = useState("");
   const [editScheduleType, setEditScheduleType] = useState<"cron" | "at" | "every">("cron");
   const [editInstruction, setEditInstruction] = useState("");
+  const [editAgentId, setEditAgentId] = useState("main");
   const [editEnabled, setEditEnabled] = useState(true);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -93,9 +99,17 @@ export function CronPanel() {
       setEditSchedule(selectedJob.schedule);
       setEditScheduleType(selectedJob.schedule_type);
       setEditInstruction(selectedJob.instruction);
+      setEditAgentId(selectedJob.agent_id ?? "main");
       setEditEnabled(selectedJob.enabled);
     }
   }, [selectedJob]);
+
+  // 打开创建对话框时同步当前选中的 agent
+  useEffect(() => {
+    if (addOpen) {
+      setAddAgentId(selectedAgentId ?? "main");
+    }
+  }, [addOpen, selectedAgentId]);
 
   const handleAdd = async () => {
     if (!addName.trim() || !addSchedule.trim() || !addInstruction.trim()) {
@@ -110,6 +124,7 @@ export function CronPanel() {
         schedule: addSchedule.trim(),
         schedule_type: addScheduleType,
         instruction: addInstruction.trim(),
+        agent_id: addAgentId,
       });
       setAddOpen(false);
       setAddName("");
@@ -135,6 +150,7 @@ export function CronPanel() {
         schedule_type: editScheduleType,
         instruction: editInstruction.trim(),
         enabled: editEnabled,
+        agent_id: editAgentId,
       });
       await reload();
     } catch (e) {
@@ -187,6 +203,25 @@ export function CronPanel() {
                     placeholder="任务名称"
                     className="mt-1"
                   />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground">执行 Agent</label>
+                  <Select
+                    value={addAgentId}
+                    onValueChange={setAddAgentId}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="选择 Agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="main">main</SelectItem>
+                      {agents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground">调度类型</label>
@@ -284,6 +319,25 @@ export function CronPanel() {
                     onChange={(e) => setEditName(e.target.value)}
                     className="mt-1"
                   />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground">执行 Agent</label>
+                  <Select
+                    value={editAgentId}
+                    onValueChange={setEditAgentId}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="选择 Agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="main">main</SelectItem>
+                      {agents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground">调度类型</label>

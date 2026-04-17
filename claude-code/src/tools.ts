@@ -34,6 +34,13 @@ const cronTools = feature('AGENT_TRIGGERS')
       require('./tools/ScheduleCronTool/CronListTool.js').CronListTool,
     ]
   : []
+const sidecarCronTools = feature('AGENT_TRIGGERS')
+  ? [
+      require('./tools/SidecarCronTool/SidecarCronCreateTool.js').SidecarCronCreateTool,
+      require('./tools/SidecarCronTool/SidecarCronDeleteTool.js').SidecarCronDeleteTool,
+      require('./tools/SidecarCronTool/SidecarCronListTool.js').SidecarCronListTool,
+    ]
+  : []
 const RemoteTriggerTool = feature('AGENT_TRIGGERS_REMOTE')
   ? require('./tools/RemoteTriggerTool/RemoteTriggerTool.js').RemoteTriggerTool
   : null
@@ -235,6 +242,7 @@ export function getAllBaseTools(): Tools {
     ...(WorkflowTool ? [WorkflowTool] : []),
     ...(SleepTool ? [SleepTool] : []),
     ...cronTools,
+    ...sidecarCronTools,
     ...(RemoteTriggerTool ? [RemoteTriggerTool] : []),
     ...(MonitorTool ? [MonitorTool] : []),
     BriefTool,

@@ -18,8 +18,8 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { homedir } from 'os'
 import { parseCronExpression, computeNextCronRun } from '../../utils/cron.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 // ─── 内部存储类型定义 ─────────────────────────────────────────────────────────
 
@@ -34,6 +34,7 @@ export interface CronJobStore {
   instruction: string
   enabled: boolean
   run_count: number
+  agent_id?: string
   createdAt: string
   updatedAt: string
   lastRunAt?: number   // Unix timestamp (ms)
@@ -71,6 +72,7 @@ interface CronJobDTO {
   schedule: string
   enabled: boolean
   instruction: string
+  agent_id?: string
   last_run?: number
   next_run?: number
   run_count: number
@@ -175,6 +177,12 @@ async function writeHistory(history: CronHistoryEntry[]): Promise<void> {
   await fs.writeFile(getHistoryFile(), JSON.stringify(history, null, 2), 'utf-8')
 }
 
+let globalSchedulerRef: { current?: { refreshSchedule: () => void } } | undefined
+
+export function refreshCronSchedule(): void {
+  globalSchedulerRef?.current?.refreshSchedule()
+}
+
 function parseEveryInterval(s: string): number | null {
   const match = s.trim().match(/^(\d+)\s*(s|sec|m|min|h|hr|d|day)s?$/i)
   if (!match) return null
@@ -205,7 +213,7 @@ function computeNextRunAt(schedule: string, scheduleType: 'cron' | 'at' | 'every
   return undefined
 }
 
-function validateSchedule(schedule: string, scheduleType: 'cron' | 'at' | 'every'): void {
+export function validateSchedule(schedule: string, scheduleType: 'cron' | 'at' | 'every'): void {
   if (scheduleType === 'cron') {
     const fields = parseCronExpression(schedule)
     if (!fields) {
@@ -235,6 +243,7 @@ function toDTO(job: CronJobStore): CronJobDTO {
     schedule: job.schedule,
     enabled: job.enabled,
     instruction: job.instruction,
+    agent_id: job.agent_id,
     last_run: job.lastRunAt ? Math.floor(job.lastRunAt / 1000) : undefined,
     next_run: job.nextRunAt ? Math.floor(job.nextRunAt / 1000) : undefined,
     run_count: job.run_count,
@@ -255,12 +264,13 @@ async function getCronJobs(): Promise<CronJobDTO[]> {
 /**
  * addCronJob → 添加新的 Cron 任务
  */
-async function addCronJob(params: {
+export async function addCronJob(params: {
   name: string
   schedule: string
   schedule_type?: 'cron' | 'at' | 'every'
   instruction: string
   enabled?: boolean
+  agent_id?: string
 }): Promise<{ job_id: string }> {
   if (!params.name || typeof params.name !== 'string') {
     throw new Error('参数 name 不能为空')
@@ -284,6 +294,7 @@ async function addCronJob(params: {
     schedule_type: params.schedule_type ?? 'cron',
     instruction: params.instruction,
     enabled: params.enabled !== undefined ? params.enabled : true,
+    agent_id: params.agent_id ?? 'main',
     run_count: 0,
     createdAt: now,
     updatedAt: now,
@@ -306,6 +317,7 @@ async function updateCronJob(params: {
   schedule_type?: 'cron' | 'at' | 'every'
   instruction?: string
   enabled?: boolean
+  agent_id?: string
 }): Promise<void> {
   if (!params.id) {
     throw new Error('参数 id 不能为空')
@@ -335,6 +347,7 @@ async function updateCronJob(params: {
     schedule_type: newScheduleType,
     instruction: params.instruction !== undefined ? params.instruction : existing.instruction,
     enabled: params.enabled !== undefined ? params.enabled : existing.enabled,
+    agent_id: params.agent_id !== undefined ? params.agent_id : existing.agent_id,
     nextRunAt: computeNextRunAt(newSchedule, newScheduleType),
     updatedAt: now,
   }
@@ -346,7 +359,7 @@ async function updateCronJob(params: {
 /**
  * deleteCronJob → 删除 Cron 任务
  */
-async function deleteCronJob(params: { id: string }): Promise<void> {
+export async function deleteCronJob(params: { id: string }): Promise<void> {
   if (!params.id) {
     throw new Error('参数 id 不能为空')
   }
@@ -396,7 +409,7 @@ async function runCronJob(
   await writeJobs(jobs)
 
   // 异步执行（不阻塞 RPC 响应）
-  executeJobAsync(runId, params.id, jobIdx, job.name, job.instruction, agentCore, startTime, server).catch(() => {
+  executeJobAsync(runId, params.id, jobIdx, job.name, job.instruction, job.agent_id ?? 'main', agentCore, startTime, server).catch(() => {
     // 错误已在 executeJobAsync 内部捕获并写入历史
   })
 }
@@ -410,6 +423,7 @@ async function executeJobAsync(
   jobIdx: number,
   jobName: string,
   instruction: string,
+  agentId: string,
   agentCore: AgentCoreLike,
   startTime: number,
   server: ServerLike,
@@ -419,7 +433,7 @@ async function executeJobAsync(
   let errorMsg: string | undefined
 
   try {
-    const generator = agentCore.execute(instruction)
+    const generator = agentCore.execute(instruction, { agentId })
     const toolCalls: Array<{ name: string; input: unknown; result?: unknown; isError?: boolean }> = []
     let completionReason = ''
 
@@ -524,6 +538,7 @@ async function executeJobAsync(
       type: 'job_complete',
       jobId,
       jobName,
+      agentId,
       success,
       output,
       error: errorMsg,
@@ -572,6 +587,7 @@ export function registerCronHandlers(
   server: ServerLike,
   schedulerRef?: { current?: { refreshSchedule: () => void } },
 ): void {
+  globalSchedulerRef = schedulerRef
   server.registerMethod('getCronJobs', async (_params: unknown) => {
     return getCronJobs()
   })
@@ -583,6 +599,7 @@ export function registerCronHandlers(
       schedule_type?: 'cron' | 'at' | 'every'
       instruction: string
       enabled?: boolean
+      agent_id?: string
     })
     schedulerRef?.current?.refreshSchedule()
     return result
@@ -596,6 +613,7 @@ export function registerCronHandlers(
       schedule_type?: 'cron' | 'at' | 'every'
       instruction?: string
       enabled?: boolean
+      agent_id?: string
     })
     schedulerRef?.current?.refreshSchedule()
   })

@@ -34,14 +34,16 @@ export const DEFAULT_MAX_AGE_DAYS =
  * `CLAUDE_CODE_DISABLE_CRON` is a local override that wins over GB.
  */
 export function isKairosCronEnabled(): boolean {
-  return feature('AGENT_TRIGGERS')
-    ? !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_CRON) &&
-        getFeatureValue_CACHED_WITH_REFRESH(
-          'tengu_kairos_cron',
-          true,
-          KAIROS_CRON_REFRESH_MS,
-        )
-    : false
+  if (!feature('AGENT_TRIGGERS')) return false
+  // Sidecar 模式使用独立的 SidecarCron 系统（~/.claude/cron/jobs.json + CronPanel），
+  // 禁用原始的 ScheduleCronTool 以避免两套系统同时活跃导致任务存储位置混乱。
+  if (process.env.SIDECAR_MODE === 'true') return false
+  return !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_CRON) &&
+    getFeatureValue_CACHED_WITH_REFRESH(
+      'tengu_kairos_cron',
+      true,
+      KAIROS_CRON_REFRESH_MS,
+    )
 }
 
 /**
