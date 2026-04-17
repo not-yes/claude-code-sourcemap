@@ -120,7 +120,27 @@ fn update_cached_secrets(secrets: Vec<SecretEntry>) -> Result<(), String> {
 /// 预加载缓存（应用启动时调用，确保只访问 1 次 Keychain）
 pub fn preload_cache() -> Result<(), String> {
     log::info!("preload_cache: 开始预加载安全存储缓存");
-    let _ = get_cached_secrets()?;
+    let secrets = get_cached_secrets()?;
+
+    // 同步初始化 CONFIG_CACHE，避免 sidecar 启动时再次走初始化路径
+    let cache = get_config_cache();
+    if let Ok(mut cache_guard) = cache.write() {
+        if !cache_guard.initialized {
+            let get_value = |key: &str| -> Option<String> {
+                secrets.iter().find(|s| s.key == key).map(|s| s.value.clone())
+            };
+            cache_guard.api_key = get_value(KEY_API_KEY);
+            cache_guard.base_url = get_value(KEY_BASE_URL);
+            cache_guard.model = get_value(KEY_MODEL);
+            cache_guard.small_fast_model = get_value(KEY_SMALL_FAST_MODEL);
+            cache_guard.sonnet_model = get_value(KEY_SONNET_MODEL);
+            cache_guard.opus_model = get_value(KEY_OPUS_MODEL);
+            cache_guard.haiku_model = get_value(KEY_HAIKU_MODEL);
+            cache_guard.initialized = true;
+            log::info!("preload_cache: CONFIG_CACHE 已同步初始化");
+        }
+    }
+
     log::info!("preload_cache: 预加载完成");
     Ok(())
 }
@@ -140,6 +160,8 @@ struct CachedConfig {
     sonnet_model: Option<String>,
     opus_model: Option<String>,
     haiku_model: Option<String>,
+    // 显式标记缓存是否已初始化（避免所有字段为 None 时误判为未初始化）
+    initialized: bool,
 }
 
 /// 获取 keyring 实例
@@ -151,6 +173,8 @@ fn get_keyring() -> &'static keyring::Entry {
 
 /// 直接从 keychain 读取所有密钥（内部函数，只在缓存初始化时调用）
 fn read_all_secrets_from_keychain() -> Result<Vec<SecretEntry>, String> {
+    eprintln!("[KEYCHAIN_DIAGNOSTIC] RUST: read_all_secrets_from_keychain() called — this will trigger macOS keychain prompt");
+    log::warn!("read_all_secrets_from_keychain: 即将访问 macOS Keychain（如果看到此日志多次，说明有重复访问）");
     let keyring = get_keyring();
 
     match keyring.get_password() {
@@ -253,7 +277,7 @@ pub fn refresh_config_cache() {
         log::info!("refresh_config_cache: secrets 缓存已清空");
     }
 
-    // 清空 CONFIG_CACHE
+    // 清空 CONFIG_CACHE（保留 initialized=false 的默认状态）
     let cache = get_config_cache();
     if let Ok(mut cache_guard) = cache.write() {
         *cache_guard = CachedConfig::default();
@@ -286,6 +310,7 @@ fn init_config_cache(cache: &mut CachedConfig) {
     cache.sonnet_model = get_value(KEY_SONNET_MODEL);
     cache.opus_model = get_value(KEY_OPUS_MODEL);
     cache.haiku_model = get_value(KEY_HAIKU_MODEL);
+    cache.initialized = true;
 
     log::info!(
         "init_config_cache: 加载完成 - api_key={}, base_url={}, model={}",
@@ -297,14 +322,7 @@ fn init_config_cache(cache: &mut CachedConfig) {
 
 /// 检查 CONFIG_CACHE 是否已初始化
 fn is_config_cache_initialized(cache: &CachedConfig) -> bool {
-    // 只要有一个字段有值，就认为缓存已初始化
-    cache.api_key.is_some()
-        || cache.base_url.is_some()
-        || cache.model.is_some()
-        || cache.small_fast_model.is_some()
-        || cache.sonnet_model.is_some()
-        || cache.opus_model.is_some()
-        || cache.haiku_model.is_some()
+    cache.initialized
 }
 
 /// 同步读取 API Key（用于 Sidecar 启动）

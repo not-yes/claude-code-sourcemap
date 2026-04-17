@@ -295,6 +295,21 @@ export function getAnthropicApiKeyWithSource(
       source: 'none',
     }
   }
+  // In desktop sidecar mode, the host (Rust) explicitly passes ANTHROPIC_API_KEY
+  // or ANTHROPIC_AUTH_TOKEN via spawn env. Trust it directly to avoid a second
+  // keychain prompt from the Bun sidecar (which uses a different keychain
+  // service than the Rust host).
+  if (
+    (apiKeyEnv || process.env.ANTHROPIC_AUTH_TOKEN) &&
+    (process.env.CLAUDE_CODE_ENTRYPOINT === 'claude-desktop' ||
+      process.env.SIDECAR_CWD !== undefined)
+  ) {
+    return {
+      key: apiKeyEnv || null,
+      source: apiKeyEnv ? 'ANTHROPIC_API_KEY' : 'none',
+    }
+  }
+
   // Check for ANTHROPIC_API_KEY before checking the apiKeyHelper or /login-managed key
   if (
     apiKeyEnv &&
@@ -1050,6 +1065,8 @@ export function prefetchAwsCredentialsAndBedRockInfoIfSafe(): void {
 /** @private Use {@link getAnthropicApiKey} or {@link getAnthropicApiKeyWithSource} */
 export const getApiKeyFromConfigOrMacOSKeychain = memoize(
   (): { key: string; source: ApiKeySource } | null => {
+    console.error('[KEYCHAIN_DIAGNOSTIC] BUN: getApiKeyFromConfigOrMacOSKeychain() called')
+    console.error(new Error('stack trace for keychain access').stack)
     if (isBareMode()) return null
     // TODO: migrate to SecureStorage
     if (process.platform === 'darwin') {
@@ -1065,6 +1082,7 @@ export const getApiKeyFromConfigOrMacOSKeychain = memoize(
       } else {
         const storageServiceName = getMacOsKeychainStorageServiceName()
         try {
+          console.error(`[KEYCHAIN_DIAGNOSTIC] BUN: about to spawn security CLI for service "${storageServiceName}"`)
           const result = execSyncWithDefaults_DEPRECATED(
             `security find-generic-password -a $USER -w -s "${storageServiceName}"`,
           )

@@ -31,6 +31,9 @@ export const macOsKeychainStorage = {
       return prev.data
     }
 
+    console.error(`[KEYCHAIN_DIAGNOSTIC] BUN: macOsKeychainStorage.read() called for service "${getMacOsKeychainStorageServiceName(CREDENTIALS_SERVICE_SUFFIX)}"`)
+    console.error(new Error('stack trace for macOsKeychainStorage.read').stack)
+
     try {
       const storageServiceName = getMacOsKeychainStorageServiceName(
         CREDENTIALS_SERVICE_SUFFIX,
@@ -176,6 +179,8 @@ export const macOsKeychainStorage = {
 } satisfies SecureStorage
 
 async function doReadAsync(): Promise<SecureStorageData | null> {
+  console.error(`[KEYCHAIN_DIAGNOSTIC] BUN: doReadAsync() called for service "${getMacOsKeychainStorageServiceName(CREDENTIALS_SERVICE_SUFFIX)}"`)
+  console.error(new Error('stack trace for doReadAsync').stack)
   try {
     const storageServiceName = getMacOsKeychainStorageServiceName(
       CREDENTIALS_SERVICE_SUFFIX,

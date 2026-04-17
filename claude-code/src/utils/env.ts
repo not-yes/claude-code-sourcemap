@@ -1,5 +1,4 @@
 import memoize from 'lodash-es/memoize.js'
-import { homedir } from 'os'
 import { join } from 'path'
 import { fileSuffixForOauthConfig } from '../constants/oauth.js'
 import { isRunningWithBun } from './bundledMode.js'
@@ -22,7 +21,7 @@ export const getGlobalClaudeFile = memoize((): string => {
   }
 
   const filename = `.claude${fileSuffixForOauthConfig()}.json`
-  return join(process.env.CLAUDE_CONFIG_DIR || homedir(), filename)
+  return join(getClaudeConfigHomeDir(), filename)
 })
 
 const hasInternetAccess = memoize(async (): Promise<boolean> => {
