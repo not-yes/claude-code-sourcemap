@@ -543,6 +543,7 @@ class AgentCoreImpl implements AgentCore {
         maxBudgetUsd: this.config.maxBudgetUsd,
         verbose: false,
         abortController: this.abortController,
+        agentId: options?.agentId,
       }
 
       // 使用 QueryEngine 执行查询
@@ -1177,6 +1178,22 @@ class AgentCoreImpl implements AgentCore {
                 type: 'rule',
                 ruleName: 'core-permission-engine',
                 ruleDescription: `Permission mode: ${permMode}`,
+              },
+            }
+          }
+
+          // 只读工具在 interactive 模式下自动允许，避免 ToolSearchTool 等
+          // 纯查询类工具频繁弹窗（与原始 Claude Code 的 permissions.ts 行为对齐）
+          const isReadOp = tool.isReadOnly?.(input) ?? false
+          if (isReadOp) {
+            return {
+              behavior: 'allow',
+              updatedInput: input,
+              toolUseID,
+              decisionReason: {
+                type: 'rule',
+                ruleName: 'core-permission-engine',
+                ruleDescription: `Permission mode: ${permMode} (read-only)`,
               },
             }
           }
