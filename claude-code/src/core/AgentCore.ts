@@ -397,6 +397,7 @@ class AgentCoreImpl implements AgentCore {
           } else {
             // 创建新会话（使用请求的 ID）
             const now = new Date().toISOString()
+            const reqSessionCwd = options?.cwd || this.config.cwd
             await this.sessionStorage.saveSession(requestedSessionId, {
               metadata: {
                 id: requestedSessionId,
@@ -404,6 +405,7 @@ class AgentCoreImpl implements AgentCore {
                 createdAt: now,
                 updatedAt: now,
                 messageCount: 0,
+                cwd: reqSessionCwd,
               },
               messages: [],
             })
@@ -415,6 +417,7 @@ class AgentCoreImpl implements AgentCore {
           const { randomUUID } = await import('crypto')
           const newSessionId = randomUUID()
           const now = new Date().toISOString()
+          const autoSessionCwd = options?.cwd || this.config.cwd
           await this.sessionStorage.saveSession(newSessionId, {
             metadata: {
               id: newSessionId,
@@ -422,6 +425,7 @@ class AgentCoreImpl implements AgentCore {
               createdAt: now,
               updatedAt: now,
               messageCount: 0,
+              cwd: autoSessionCwd,
             },
             messages: [],
           })
@@ -739,6 +743,15 @@ class AgentCoreImpl implements AgentCore {
       }))
     }
 
+    // 设置为活跃会话
+    this.activeSessionId = id
+
+    // 同步全局 sessionId，确保 QueryEngine 的 CLI 持久化使用正确的路径
+    const sessionCwd = params?.cwd || this.config.cwd
+    const { switchSession } = await import('../bootstrap/state.js')
+    const { getProjectDir } = await import('../utils/sessionStoragePortable.js')
+    switchSession(asSessionId(id), getProjectDir(sessionCwd))
+
     const session: Session = {
       id,
       createdAt: now,
@@ -748,17 +761,9 @@ class AgentCoreImpl implements AgentCore {
         name: params?.name,
         model: params?.model,
         systemPrompt: params?.systemPrompt,
+        cwd: sessionCwd,
       },
     }
-
-    // 设置为活跃会话
-    this.activeSessionId = id
-
-    // 同步全局 sessionId，确保 QueryEngine 的 CLI 持久化使用正确的路径
-    const sessionCwd = params?.cwd || this.config.cwd
-    const { switchSession } = await import('../bootstrap/state.js')
-    const { getProjectDir } = await import('../utils/sessionStoragePortable.js')
-    switchSession(asSessionId(id), getProjectDir(sessionCwd))
 
     // 持久化会话（失败不阻塞）
     if (this.sessionStorage) {
@@ -771,6 +776,7 @@ class AgentCoreImpl implements AgentCore {
             createdAt: now,
             updatedAt: now,
             messageCount: 0,
+            cwd: sessionCwd,
           },
           messages: [],
         })
@@ -794,6 +800,7 @@ class AgentCoreImpl implements AgentCore {
             metadata: {
               name: data.metadata.name,
               model: data.metadata.model,
+              cwd: data.metadata.cwd,
             },
           }
         }
@@ -817,6 +824,7 @@ class AgentCoreImpl implements AgentCore {
           metadata: {
             name: meta.name,
             model: meta.model,
+            cwd: meta.cwd,
           },
         }))
       } catch {

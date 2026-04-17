@@ -211,8 +211,8 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
             title: s.customTitle || s.summary,
             task: s.firstPrompt,
             agent_id: sessionAgentId,
-            created_at: s.createdAt ? new Date(s.createdAt).toISOString() : undefined,
-            updated_at: new Date(s.lastModified).toISOString(),
+            created_at: s.created ? new Date(s.created).toISOString() : undefined,
+            updated_at: s.modified ? new Date(s.modified).toISOString() : undefined,
             cwd: s.cwd,
             tag: s.tag,
             gitBranch: s.gitBranch,
@@ -239,8 +239,8 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
             continue
           }
 
-          // Sidecar 会话没有独立的 cwd 字段，使用 agentCore 的当前 cwd
-          const sidecarCwd = agentCore.getState().cwd || undefined
+          // Sidecar 会话的 cwd 从 metadata 读取（AgentCore 创建/保存会话时已写入）
+          const sidecarCwd = (s.metadata?.cwd as string | undefined) || undefined
 
           // 如果请求了特定 cwd，按 cwd 过滤
           if (requestedCwd && sidecarCwd && sidecarCwd !== requestedCwd) {
@@ -316,7 +316,7 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
               id: (msg['uuid'] as string | undefined) ?? (entry['id'] as string | undefined),
               role,
               content: text,
-              created_at: entry['created_at'] as string | undefined,
+              created_at: (entry['timestamp'] as string | undefined) ?? (entry['created_at'] as string | undefined),
             })
           } else if (entry['role']) {
             // 旧格式
@@ -324,7 +324,7 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
               id: entry['id'] as string | undefined,
               role: entry['role'] as 'user' | 'assistant',
               content: typeof entry['content'] === 'string' ? entry['content'] as string : '',
-              created_at: entry['created_at'] as string | undefined,
+              created_at: (entry['timestamp'] as string | undefined) ?? (entry['created_at'] as string | undefined),
             })
           }
         } catch {
@@ -417,7 +417,7 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
                 role,
                 content: text,
                 contentBlocks,
-                created_at: (msg['created_at'] as string | undefined),
+                created_at: (msg['timestamp'] as string | undefined) ?? (msg['created_at'] as string | undefined),
               }
             }
 
@@ -429,7 +429,7 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
                 typeof msg['content'] === 'string'
                   ? (msg['content'] as string)
                   : String(msg['content'] ?? ''),
-              created_at: msg['created_at'] as string | undefined,
+              created_at: (msg['timestamp'] as string | undefined) ?? (msg['created_at'] as string | undefined),
             }
           })
         }

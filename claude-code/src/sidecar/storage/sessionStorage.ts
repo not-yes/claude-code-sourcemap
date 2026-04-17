@@ -39,6 +39,7 @@ export interface SessionMetadata {
   createdAt: string
   updatedAt: string
   messageCount: number
+  cwd?: string
 }
 
 export interface SessionData {
