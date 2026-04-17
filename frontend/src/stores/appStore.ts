@@ -121,6 +121,9 @@ export interface AppState {
   /** 标志：前端主动触发的 agent stop（如切换工作目录），用于抑制自动重连 */
   intentionalAgentStop: boolean;
   setIntentionalAgentStop: (v: boolean) => void;
+  /** 各 Agent 输入框草稿，key 为 agentId */
+  agentInputDrafts: Record<string, string>;
+  setAgentInputDraft: (agentId: string, draft: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -152,6 +155,14 @@ export const useAppStore = create<AppState>()(
       agentStartLoading: {},
       agentWorkingDirectory: {},
       intentionalAgentStop: false,
+      agentInputDrafts: {},
+      setAgentInputDraft: (agentId: string, draft: string) =>
+        set((state) => ({
+          agentInputDrafts: {
+            ...state.agentInputDrafts,
+            [agentId]: draft,
+          },
+        })),
       setSidecarConnected: (sidecarConnected) =>
         set(sidecarConnected ? { sidecarConnected, sidecarError: null } : { sidecarConnected }),
       setSidecarError: (sidecarError) => set({ sidecarError }),

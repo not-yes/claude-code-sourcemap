@@ -49,12 +49,15 @@ export const SidecarCronCreateTool = buildTool({
   async prompt() {
     return `Create a scheduled task in the desktop cron panel.
 
+## ⚠️ CRITICAL: You MUST call this tool to create a task. Text replies alone will NOT create any task.
+
 ## Schedule Types
 
 - **cron** (default): standard 5-field cron in local time — "分 时 日 月 周"
   - "0 9 * * *" → 每天早上 9:00
   - "0 9 * * 1-5" → 工作日早上 9:00
   - "*/10 * * * *" → 每 10 分钟
+  - "45 9 * * *" → 每天早上 9:45
 - **at**: a specific future time in ISO-like format
   - "2024-12-25 08:00"
 - **every**: a fixed interval
@@ -66,9 +69,10 @@ export const SidecarCronCreateTool = buildTool({
    - "每天/每周/每小时/每 X 分钟" → cron (translate to 5-field cron)
    - "在 2024-... 执行" → at
    - "每隔 5 分钟" / "每 1 小时" → every
-2. name should be a short Chinese or English label.
-3. instruction is the full prompt the agent will run when the task fires.
-4. When the user gives a natural-language time like "每天早上 8 点", translate it to the correct cron expression before calling this tool.`
+2. name should be a short Chinese or English label (max 20 chars). Examples: "AI新闻总结", "每日报表检查"
+3. instruction is the full prompt the agent will run when the task fires. If the user didn't explicitly state an instruction, use their full request as the instruction.
+4. When the user gives a natural-language time like "每天早上 8 点", translate it to the correct cron expression BEFORE calling this tool.
+5. After calling this tool, report the result to the user (task name, schedule, and job ID).`
   },
   async validateInput(input) {
     try {

@@ -3,7 +3,7 @@ import { bugs, name, version } from '../package.json';
 export const features = [
   // 'ABLATION_BASELINE',
   // 'AGENT_MEMORY_SNAPSHOT',
-  // 'AGENT_TRIGGERS',
+  'AGENT_TRIGGERS',
   // 'AGENT_TRIGGERS_REMOTE',
   // 'ALLOW_TEST_VERSIONS',
   // 'ANTI_DISTILLATION_CC',

@@ -124,6 +124,7 @@ async function main(): Promise<void> {
       `--outfile=${outfile}`,
       '--define', 'process.env.SIDECAR_MODE="true"',
       '--define', 'process.env.NODE_ENV="production"',
+      '--feature=AGENT_TRIGGERS',
       // playwright-core 的可选/动态依赖，静态编译时无法解析，标记为 external 跳过
       '--external', 'chromium-bidi',
       '--external', 'chromium-bidi/lib/cjs/bidiMapper/BidiMapper',

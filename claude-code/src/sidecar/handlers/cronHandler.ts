@@ -264,6 +264,8 @@ async function getCronJobs(): Promise<CronJobDTO[]> {
 /**
  * addCronJob → 添加新的 Cron 任务
  */
+const MAX_JOBS = 50
+
 export async function addCronJob(params: {
   name: string
   schedule: string
@@ -283,6 +285,10 @@ export async function addCronJob(params: {
   }
 
   const jobs = await readJobs()
+  if (jobs.length >= MAX_JOBS) {
+    throw new Error(`定时任务数量已达上限（最大 ${MAX_JOBS} 条），请先删除旧任务后再创建。`)
+  }
+
   const now = new Date().toISOString()
 
   validateSchedule(params.schedule, params.schedule_type ?? 'cron')

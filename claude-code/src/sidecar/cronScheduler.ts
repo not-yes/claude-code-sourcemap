@@ -30,13 +30,20 @@ function parseEveryIntervalMs(s: string): number | null {
 /**
  * 调度器所需的外部依赖，通过构造函数注入，方便测试与解耦。
  */
+export interface CronJobResult {
+  success: boolean
+  output: string
+  error?: string
+  duration_ms: number
+}
+
 export interface CronSchedulerDeps {
   /** 读取所有 Cron 任务列表 */
   readJobs: () => Promise<CronJobStore[]>
   /** 写入更新后的任务列表 */
   writeJobs: (jobs: CronJobStore[]) => Promise<void>
-  /** 执行指定任务的实际逻辑 */
-  executeJob: (jobId: string, jobName: string, instruction: string, agentId?: string) => Promise<void>
+  /** 执行指定任务的实际逻辑，返回执行结果 */
+  executeJob: (jobId: string, jobName: string, instruction: string, agentId?: string) => Promise<CronJobResult>
   /** 向前端发送 JSON-RPC 通知 */
   sendNotification: (method: string, params: unknown) => Promise<void>
   /** 日志输出 */
@@ -169,10 +176,19 @@ export class SidecarCronScheduler {
         if (now >= nextFire) {
           this.deps.log('INFO', `[CronScheduler] 触发任务: ${job.id} name="${job.name}" type=${job.schedule_type}`)
 
+          const startTime = Date.now()
+          let result: CronJobResult
+
           // 执行任务：出错只记录日志，不抛出，确保不影响其他任务的检查
           try {
-            await this.deps.executeJob(job.id, job.name, job.instruction, job.agent_id ?? 'main')
+            result = await this.deps.executeJob(job.id, job.name, job.instruction, job.agent_id ?? 'main')
           } catch (err: unknown) {
+            result = {
+              success: false,
+              output: '',
+              error: err instanceof Error ? err.message : String(err),
+              duration_ms: Date.now() - startTime,
+            }
             this.deps.log('ERROR', `[CronScheduler] 任务执行失败: ${job.id}`, err)
           }
 
@@ -180,6 +196,12 @@ export class SidecarCronScheduler {
           const nowTs = Date.now()
           job.run_count = (job.run_count ?? 0) + 1
           job.lastRunAt = nowTs
+          job.last_result = {
+            success: result.success,
+            output: result.output,
+            error: result.error,
+            duration_ms: result.duration_ms,
+          }
 
           // ── 计算新的下次触发时间 ─────────────────────────────────────────
           if (job.schedule_type === 'cron') {
@@ -190,9 +212,11 @@ export class SidecarCronScheduler {
                 job.nextRunAt = nextRun.getTime()
                 this.nextFireAt.set(job.id, nextRun.getTime())
               } else {
+                job.nextRunAt = undefined
                 this.nextFireAt.delete(job.id)
               }
             } else {
+              job.nextRunAt = undefined
               this.nextFireAt.delete(job.id)
             }
           } else if (job.schedule_type === 'at') {
@@ -206,6 +230,7 @@ export class SidecarCronScheduler {
               job.nextRunAt = nowTs + intervalMs
               this.nextFireAt.set(job.id, job.nextRunAt)
             } else {
+              job.nextRunAt = undefined
               this.nextFireAt.delete(job.id)
             }
           }
@@ -217,6 +242,7 @@ export class SidecarCronScheduler {
             if (idx !== -1) {
               latestJobs[idx].run_count = job.run_count
               latestJobs[idx].lastRunAt = job.lastRunAt
+              latestJobs[idx].last_result = job.last_result
               latestJobs[idx].enabled = job.enabled
               if (job.nextRunAt !== undefined) {
                 latestJobs[idx].nextRunAt = job.nextRunAt
@@ -229,14 +255,18 @@ export class SidecarCronScheduler {
             this.deps.log('ERROR', `[CronScheduler] 写回任务状态失败: ${job.id}`, err)
           }
 
-          // 通知前端任务已触发
+          // 通知前端任务已完成（格式与 cronHandler.executeJobAsync 对齐）
           try {
             await this.deps.sendNotification('$/cron', {
-              job_id: job.id,
-              job_name: job.name,
+              type: 'job_complete',
+              jobId: job.id,
+              jobName: job.name,
               agentId: job.agent_id ?? 'main',
-              status: 'triggered',
-              trigger: 'scheduler',
+              success: result.success,
+              output: result.output,
+              error: result.error,
+              duration_ms: result.duration_ms,
+              timestamp: startTime,
             })
           } catch (err: unknown) {
             this.deps.log('WARN', `[CronScheduler] 发送通知失败: ${job.id}`, err)

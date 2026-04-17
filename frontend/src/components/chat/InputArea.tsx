@@ -8,8 +8,10 @@ import {
 import { Send, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
+import { useAppStore } from "@/stores/appStore";
 
 interface InputAreaProps {
+  agentId: string;
   onSend: (content: string) => Promise<void>;
   disabled?: boolean;
   loading?: boolean;
@@ -27,12 +29,15 @@ function parseSlash(value: string, cursorPos: number): { query: string; startInd
 }
 
 export function InputArea({
+  agentId,
   onSend,
   disabled,
   loading = false,
   onStop,
 }: InputAreaProps) {
-  const [value, setValue] = useState("");
+  const agentInputDrafts = useAppStore((s) => s.agentInputDrafts);
+  const setAgentInputDraft = useAppStore((s) => s.setAgentInputDraft);
+  const [value, setValue] = useState(() => agentInputDrafts[agentId] ?? "");
   const [sending, setSending] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerMode, setPickerMode] = useState<"slash" | null>(null);
@@ -101,6 +106,7 @@ export function InputArea({
       await onSend(trimmed);
       setValue("");
       valueRef.current = "";
+      setAgentInputDraft(agentId, "");
     } finally {
       setSending(false);
     }
@@ -235,6 +241,7 @@ export function InputArea({
                 setValue(e.target.value);
                 valueRef.current = e.target.value;
                 setCursorPos(e.target.selectionStart ?? 0);
+                setAgentInputDraft(agentId, e.target.value);
               }}
               onKeyUp={(e) => {
                 setCursorPos((e.target as HTMLTextAreaElement).selectionStart ?? 0);

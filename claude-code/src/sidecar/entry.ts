@@ -385,14 +385,39 @@ async function main(): Promise<void> {
     writeJobs,
     executeJob: async (jobId: string, jobName: string, instruction: string, agentId?: string) => {
       log('INFO', `调度器触发任务: ${jobName} (${jobId}) agentId=${agentId ?? 'main'}`)
+      const startTime = Date.now()
+      const outputChunks: string[] = []
+      let success = true
+      let errorMsg: string | undefined
+
       try {
         const generator = agentCore.execute(instruction, { agentId: agentId ?? 'main' })
-        // 消费 generator 直至完成（调度器自己管理 run_count/lastRunAt）
-        for await (const _event of generator) {
-          // 忽略流事件，仅等待执行完成
+        for await (const event of generator) {
+          const e = event as Record<string, unknown>
+          switch (e.type) {
+            case 'text':
+              if (e.content) {
+                outputChunks.push(String(e.content))
+              }
+              break
+            case 'error':
+              success = false
+              errorMsg = String(e.message ?? '未知错误')
+              break
+            // tool_use / tool_result / thinking / complete 等事件不收集
+          }
         }
       } catch (err) {
-        log('ERROR', `调度任务执行失败: ${jobName}:`, err instanceof Error ? err.message : String(err))
+        success = false
+        errorMsg = err instanceof Error ? err.message : String(err)
+        log('ERROR', `调度任务执行失败: ${jobName}:`, errorMsg)
+      }
+
+      return {
+        success,
+        output: outputChunks.join(''),
+        error: errorMsg,
+        duration_ms: Date.now() - startTime,
       }
     },
     sendNotification: (method: string, params: unknown) => server.sendNotification(method, params),

@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   executeStream,
   getSessionMessages,
+  getSessions,
   abortExecution,
   buildAgentEventName,
   ensureAgent,
@@ -15,9 +16,11 @@ import { PlanApprovalDialog } from "./PlanApprovalDialog";
 import { ConversationHistorySheet } from "./ConversationHistorySheet";
 import { CheckpointSheet } from "./CheckpointSheet";
 import {
+  loadMessages,
   loadMessagesPaginated,
   getTotalMessageCount,
   saveMessages,
+  clearMessages,
   MAX_MESSAGES_IN_MEMORY,
   MAX_MESSAGE_SIZE,
   MAX_RESPONSE_SIZE,
@@ -53,6 +56,7 @@ import {
 import { useAppStore } from "@/stores/appStore";
 import { usePermissionStore, type PermissionDecision } from "@/stores/permissionStore";
 import { useAgentsStore } from "@/stores/agentsStore";
+import { useCronStore } from "@/stores/cronStore";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkingDirectorySelector } from "./WorkingDirectorySelector";
@@ -255,14 +259,73 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     const localTotal = getTotalMessageCount(messageKey, currentCwd);
     const localMessages = loadMessagesPaginated(messageKey, 0, PAGE_SIZE, currentCwd);
 
-    if (localMessages.length > 0) {
-      // 本地有完整消息，直接使用（包括 contentBlocks/thinking/tool 信息）
-      // 不覆盖，因为后端只保存纯文本，会丢失 UI 展示所需的 contentBlocks
+    // 判断本地最后一条 assistant 消息是否已完成（有 usage 表示已收到 complete 事件）
+    const lastAssistant = localMessages.length > 0
+      ? [...localMessages].reverse().find((m) => m.role === 'assistant')
+      : undefined;
+    const localIncomplete = !!lastAssistant && lastAssistant.usage === undefined;
+
+    const applyLocalMessages = () => {
       setMessages(localMessages);
       setIsTruncated(false);
       setHasMoreMessages(localTotal > PAGE_SIZE);
       messageOffsetRef.current = PAGE_SIZE;
       backendOffsetRef.current = 0;
+    };
+
+    const loadFromBackend = async (sessionId: string) => {
+      setLoadingHistory(true);
+      try {
+        const fullList = await getSessionMessages(sessionId, agentId, { limit: PAGE_SIZE * 10, cwd: currentCwd });
+        const total = fullList.length;
+        let converted: Message[];
+        if (total <= PAGE_SIZE) {
+          converted = fullList.map((m, i) => sessionMessageToMessage(m, i));
+          setMessages(converted);
+          setIsTruncated(false);
+          setHasMoreMessages(false);
+          backendOffsetRef.current = 0;
+        } else {
+          const startOffset = total - PAGE_SIZE;
+          const latest = await getSessionMessages(sessionId, agentId, { offset: startOffset, limit: PAGE_SIZE, cwd: currentCwd });
+          converted = latest.map((m, i) => sessionMessageToMessage(m, startOffset + i));
+          setMessages(converted.length > MAX_MESSAGES_IN_MEMORY ? converted.slice(-MAX_MESSAGES_IN_MEMORY) : converted);
+          setIsTruncated(converted.length > MAX_MESSAGES_IN_MEMORY);
+          setHasMoreMessages(startOffset > 0);
+          backendOffsetRef.current = startOffset;
+        }
+        // 同时保存到本地（使用 session ID 作为 key）
+        saveMessages(sessionId, fullList.map((m, i) => sessionMessageToMessage(m, i)), currentCwd);
+        // 同步 backendSessionId
+        savePersistedBackendSession(agentId, sessionId, currentCwd);
+      } catch (err) {
+        console.warn('[ChatArea] 从后端加载消息失败:', err);
+        applyLocalMessages();
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
+    if (activeBackendSessionId && (localIncomplete || localMessages.length === 0)) {
+      // 本地消息未完成或为空，从后端同步最新状态
+      void loadFromBackend(activeBackendSessionId);
+    } else if (!activeBackendSessionId && localIncomplete) {
+      // 本地有未完成消息但没有 backendSessionId，尝试查找最新会话
+      getSessions({ agent_id: agentId, cwd: currentCwd, limit: 1 })
+        .then((sessions) => {
+          if (sessions.length > 0) {
+            void loadFromBackend(sessions[0].id);
+          } else {
+            applyLocalMessages();
+          }
+        })
+        .catch((err) => {
+          console.warn('[ChatArea] 查找最新会话失败:', err);
+          applyLocalMessages();
+        });
+    } else if (localMessages.length > 0) {
+      // 本地有已完成消息，直接使用（包括 contentBlocks/thinking/tool 信息）
+      applyLocalMessages();
 
       // 仅做后端会话健康检查（不覆盖本地消息）
       if (activeBackendSessionId) {
@@ -273,37 +336,6 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             setActiveBackendSessionId(null);
           });
       }
-    } else if (activeBackendSessionId) {
-      // 本地没有，从后端加载（降级为纯文本）
-      setLoadingHistory(true);
-      getSessionMessages(activeBackendSessionId, agentId, { limit: PAGE_SIZE * 10, cwd: currentCwd })
-        .then(async (fullList) => {
-          const total = fullList.length;
-          if (total <= PAGE_SIZE) {
-            const converted = fullList.map((m, i) => sessionMessageToMessage(m, i));
-            setMessages(converted);
-            setIsTruncated(false);
-            setHasMoreMessages(false);
-            backendOffsetRef.current = 0;
-          } else {
-            const startOffset = total - PAGE_SIZE;
-            const latest = await getSessionMessages(activeBackendSessionId, agentId, { offset: startOffset, limit: PAGE_SIZE, cwd: currentCwd });
-            const converted = latest.map((m, i) => sessionMessageToMessage(m, startOffset + i));
-            setMessages(converted.length > MAX_MESSAGES_IN_MEMORY ? converted.slice(-MAX_MESSAGES_IN_MEMORY) : converted);
-            setIsTruncated(converted.length > MAX_MESSAGES_IN_MEMORY);
-            setHasMoreMessages(startOffset > 0);
-            backendOffsetRef.current = startOffset;
-          }
-          // 同时保存到本地（使用 session ID 作为 key）
-          saveMessages(activeBackendSessionId, fullList.map((m, i) => sessionMessageToMessage(m, i)), currentCwd);
-        })
-        .catch(() => {
-          setMessages([]);
-          savePersistedBackendSession(agentId, null, currentCwd);
-          setActiveBackendSessionId(null);
-          toast.error("该会话已失效，已切换为本地对话（可新建对话或从历史重新选择）");
-        })
-        .finally(() => setLoadingHistory(false));
     } else {
       // 空会话
       setMessages([]);
@@ -669,8 +701,24 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                       savePersistedBackendSession(agentId, completeEvent.sessionId, cwdForSave);
                     }
                     if (!activeBackendSessionId) {
+                      // 【关键修复】首次获得 sessionId 时，将之前以 agentId 为 key 保存的本地消息
+                      // 迁移到 sessionId key 下，避免刷新后 key 不匹配导致消息"消失"
+                      const oldMessages = loadMessages(agentId, currentCwd);
+                      if (oldMessages.length > 0) {
+                        saveMessages(completeEvent.sessionId, oldMessages, currentCwd);
+                        clearMessages(agentId, currentCwd);
+                      }
                       setActiveBackendSessionId(completeEvent.sessionId);
                     }
+                  }
+                  // 如果本次对话中创建了定时任务，自动刷新 CronPanel 的任务列表
+                  const hasCronCreate = messagesRef.current.some(
+                    msg => msg.role === 'user' && msg.contentBlocks?.some(
+                      b => b.type === 'tool_result' && b.toolName === 'SidecarCronCreate'
+                    )
+                  );
+                  if (hasCronCreate) {
+                    useCronStore.getState().reload();
                   }
                   // 完成时移除 heartbeat
                   const cleaned = removeHeartbeatBlocks();
@@ -1029,7 +1077,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
           </span>
         </div>
       )}
-      <InputArea onSend={handleSend} disabled={loading} loading={loading} onStop={handleStop} />
+      <InputArea agentId={agentId} onSend={handleSend} disabled={loading} loading={loading} onStop={handleStop} />
 
       {pendingRequest?.tool === "AskUserQuestion" ? (
         <AskUserQuestionDialog request={pendingRequest} onDecision={handlePermissionDecision} />
