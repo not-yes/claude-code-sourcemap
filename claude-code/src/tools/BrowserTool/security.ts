@@ -1,6 +1,7 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { readFileSync, existsSync } from 'fs'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 // ─────────────────────────────────────────────
 // Types
@@ -46,7 +47,7 @@ function getAllowedDomains(): string[] {
   }
 
   // Priority 2: config file ~/.claude/browser-tool.json
-  const configPath = join(homedir(), '.claude', 'browser-tool.json')
+  const configPath = join(getClaudeConfigHomeDir(), 'browser-tool.json')
   if (existsSync(configPath)) {
     try {
       const raw = readFileSync(configPath, 'utf-8')

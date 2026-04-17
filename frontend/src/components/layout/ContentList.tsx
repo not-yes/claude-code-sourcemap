@@ -8,6 +8,7 @@ import { useAgents } from "@/hooks/useAgents";
 import { useCronStore } from "@/stores/cronStore";
 import { useSkills } from "@/hooks/useSkills";
 import { runCronJob, deleteCronJob, getSessions, ensureAgent, type CronJob } from "@/api/tauri-api";
+import { getSessionDisplayTitle } from "@/lib/sessionDisplay";
 import type { SkillItem } from "@/hooks/useSkills";
 import { AgentAvatar } from "@/components/agents/AgentAvatar";
 import { CreateAgentDialog } from "@/components/agents/CreateAgentDialog";
@@ -354,12 +355,13 @@ export function ContentList() {
       await Promise.all(
         agents.map(async (agent) => {
           try {
-            const sessions = await getSessions({ agent_id: agent.id, limit: 1 });
+            const cwd = useAppStore.getState().agentWorkingDirectory[agent.id] || workingDirectories[0];
+            const sessions = await getSessions({ agent_id: agent.id, cwd, limit: 1 });
             if (sessions.length > 0) {
               const session = sessions[0];
-              const raw = session.title ?? session.task ?? "";
-              if (raw) {
-                results[agent.id] = raw.length > 18 ? raw.slice(0, 18) + "…" : raw;
+              const raw = getSessionDisplayTitle(session, undefined, 18);
+              if (raw && raw !== session.id?.slice(0, 8)) {
+                results[agent.id] = raw;
               }
             }
           } catch (err) {
@@ -496,7 +498,7 @@ export function ContentList() {
                 markAsSeen(a.id);
                 // 预启动 Agent（非阻塞，失败不影响选择）
                 // 优先使用 per-agent 保存的工作目录
-                ensureAgent(a.id, useAppStore.getState().agentWorkingDirectory[a.id] ?? workingDirectories[0] ?? "")
+                ensureAgent(a.id, useAppStore.getState().agentWorkingDirectory[a.id] || workingDirectories[0] || "")
                   .then(() => {
                     refreshRunningAgents();
                   })

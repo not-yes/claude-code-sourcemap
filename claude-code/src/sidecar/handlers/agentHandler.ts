@@ -173,13 +173,15 @@ interface ServerLike {
 
 // ─── 存储路径（仅用于记忆文件和向后兼容） ───────────────────────────────────────
 
-const AGENTS_DIR = join(homedir(), '.claude', 'agents')
+function getAgentsDir(): string {
+  return join(getClaudeConfigHomeDir(), 'agents')
+}
 
 /**
  * Agent 记忆目录路径
  */
 function agentMemoryDir(agentId: string): string {
-  return join(AGENTS_DIR, agentId)
+  return join(getAgentsDir(), agentId)
 }
 
 /**
@@ -433,7 +435,7 @@ async function createAgent(params: {
   }
 
   // 在用户级 agents 目录创建 Markdown 文件
-  const userAgentsDir = join(homedir(), '.claude', 'agents')
+  const userAgentsDir = getAgentsDir()
   await fs.mkdir(userAgentsDir, { recursive: true })
 
   const agentFileName = `${params.name}.md`
@@ -514,7 +516,7 @@ async function updateAgent(params: {
   }
 
   // 在用户级 agents 目录更新 Markdown 文件
-  const userAgentsDir = join(homedir(), '.claude', 'agents')
+  const userAgentsDir = getAgentsDir()
   const agentFileName = `${params.name}.md`
   const agentFilePath = join(userAgentsDir, agentFileName)
 
@@ -591,7 +593,7 @@ async function deleteAgent(params: { name: string }): Promise<void> {
   }
 
   // 删除 Markdown 文件
-  const userAgentsDir = join(homedir(), '.claude', 'agents')
+  const userAgentsDir = getAgentsDir()
   const agentFilePath = join(userAgentsDir, `${params.name}.md`)
 
   try {

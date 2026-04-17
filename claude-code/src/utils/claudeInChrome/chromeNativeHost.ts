@@ -22,14 +22,17 @@ import { z } from 'zod'
 import { lazySchema } from '../lazySchema.js'
 import { jsonParse, jsonStringify } from '../slowOperations.js'
 import { getSecureSocketPath, getSocketDir } from './common.js'
+import { getClaudeConfigHomeDir } from '../envUtils.js'
 
 const VERSION = '1.0.0'
 const MAX_MESSAGE_SIZE = 1024 * 1024 // 1MB - Max message size that can be sent to Chrome
 
-const LOG_FILE =
-  process.env.USER_TYPE === 'ant'
-    ? join(homedir(), '.claude', 'debug', 'chrome-native-host.txt')
-    : undefined
+function getLogFile(): string | undefined {
+  if (process.env.USER_TYPE !== 'ant') return undefined
+  return join(getClaudeConfigHomeDir(), 'debug', 'chrome-native-host.txt')
+}
+
+const LOG_FILE = getLogFile()
 
 function log(message: string, ...args: unknown[]): void {
   if (LOG_FILE) {

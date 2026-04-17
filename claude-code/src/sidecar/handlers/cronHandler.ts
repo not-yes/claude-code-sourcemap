@@ -108,9 +108,15 @@ interface ServerLike {
 
 // ─── 存储路径 ─────────────────────────────────────────────────────────────────
 
-const CRON_DIR = join(homedir(), '.claude', 'cron')
-const JOBS_FILE = join(CRON_DIR, 'jobs.json')
-const HISTORY_FILE = join(CRON_DIR, 'history.json')
+function getCronDir(): string {
+  return join(getClaudeConfigHomeDir(), 'cron')
+}
+function getJobsFile(): string {
+  return join(getCronDir(), 'jobs.json')
+}
+function getHistoryFile(): string {
+  return join(getCronDir(), 'history.json')
+}
 
 // ─── 文件操作工具 ─────────────────────────────────────────────────────────────
 
@@ -118,7 +124,7 @@ const HISTORY_FILE = join(CRON_DIR, 'history.json')
  * 确保存储目录存在
  */
 async function ensureDir(): Promise<void> {
-  await fs.mkdir(CRON_DIR, { recursive: true })
+  await fs.mkdir(getCronDir(), { recursive: true })
 }
 
 /**
@@ -127,7 +133,7 @@ async function ensureDir(): Promise<void> {
 export async function readJobs(): Promise<CronJobStore[]> {
   try {
     await ensureDir()
-    const content = await fs.readFile(JOBS_FILE, 'utf-8')
+    const content = await fs.readFile(getJobsFile(), 'utf-8')
     return JSON.parse(content) as CronJobStore[]
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -142,7 +148,7 @@ export async function readJobs(): Promise<CronJobStore[]> {
  */
 export async function writeJobs(jobs: CronJobStore[]): Promise<void> {
   await ensureDir()
-  await fs.writeFile(JOBS_FILE, JSON.stringify(jobs, null, 2), 'utf-8')
+  await fs.writeFile(getJobsFile(), JSON.stringify(jobs, null, 2), 'utf-8')
 }
 
 /**
@@ -151,7 +157,7 @@ export async function writeJobs(jobs: CronJobStore[]): Promise<void> {
 async function readHistory(): Promise<CronHistoryEntry[]> {
   try {
     await ensureDir()
-    const content = await fs.readFile(HISTORY_FILE, 'utf-8')
+    const content = await fs.readFile(getHistoryFile(), 'utf-8')
     return JSON.parse(content) as CronHistoryEntry[]
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -166,7 +172,7 @@ async function readHistory(): Promise<CronHistoryEntry[]> {
  */
 async function writeHistory(history: CronHistoryEntry[]): Promise<void> {
   await ensureDir()
-  await fs.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf-8')
+  await fs.writeFile(getHistoryFile(), JSON.stringify(history, null, 2), 'utf-8')
 }
 
 function parseEveryInterval(s: string): number | null {

@@ -175,7 +175,7 @@ const BatchDeleteCheckpointsParamsSchema = z.object({
  * 格式：~/.claude/checkpoints/{sessionId}
  */
 function getCheckpointDir(sessionId: string): string {
-  return join(homedir(), '.claude', 'checkpoints', sessionId)
+  return join(getClaudeConfigHomeDir(), 'checkpoints', sessionId)
 }
 
 /**

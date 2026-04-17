@@ -35,6 +35,8 @@ import type { SessionStorage } from '../sidecar/storage/sessionStorage.js'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
+import { asSessionId } from '../types/ids.js'
 
 // ─── AgentCore 接口 ────────────────────────────────────────────────────────────
 
@@ -493,6 +495,13 @@ class AgentCoreImpl implements AgentCore {
       setCwdState(runtimeCwd)
       setProjectRoot(runtimeCwd)
 
+      // 同步全局 sessionId，确保 QueryEngine 的 CLI 持久化（.jsonl）使用正确的 sessionId 和路径
+      if (this.activeSessionId) {
+        const { switchSession } = await import('../bootstrap/state.js')
+        const { getProjectDir } = await import('../utils/sessionStoragePortable.js')
+        switchSession(asSessionId(this.activeSessionId), getProjectDir(runtimeCwd))
+      }
+
       // 获取工具列表（已筛选的）
       const tools = toolRegistry.getEnabledTools(options?.allowedTools)
 
@@ -739,6 +748,12 @@ class AgentCoreImpl implements AgentCore {
     // 设置为活跃会话
     this.activeSessionId = id
 
+    // 同步全局 sessionId，确保 QueryEngine 的 CLI 持久化使用正确的路径
+    const sessionCwd = params?.cwd || this.config.cwd
+    const { switchSession } = await import('../bootstrap/state.js')
+    const { getProjectDir } = await import('../utils/sessionStoragePortable.js')
+    switchSession(asSessionId(id), getProjectDir(sessionCwd))
+
     // 持久化会话（失败不阻塞）
     if (this.sessionStorage) {
       await this.sessionStorage
@@ -920,7 +935,7 @@ class AgentCoreImpl implements AgentCore {
    * - JSON 格式（~/.claude/agents/{agentId}.json）：soul 字段
    */
   private async loadAgentSoul(agentId: string): Promise<string> {
-    const agentsDir = join(homedir(), '.claude', 'agents')
+    const agentsDir = join(getClaudeConfigHomeDir(), 'agents')
     // 优先读取 Markdown 格式
     try {
       const mdPath = join(agentsDir, `${agentId}.md`)
@@ -961,7 +976,7 @@ class AgentCoreImpl implements AgentCore {
 
   private async loadAgentSkills(agentId: string): Promise<string> {
     try {
-      const agentConfigPath = join(homedir(), '.claude', 'agents', `${agentId}.json`)
+      const agentConfigPath = join(getClaudeConfigHomeDir(), 'agents', `${agentId}.json`)
       const agentConfigContent = await fs.readFile(agentConfigPath, 'utf-8')
       const agentConfig = JSON.parse(agentConfigContent)
 
@@ -969,7 +984,7 @@ class AgentCoreImpl implements AgentCore {
         return ''
       }
 
-      const skillsDir = join(homedir(), '.claude', 'skills')
+      const skillsDir = join(getClaudeConfigHomeDir(), 'skills')
       const skillContents: string[] = []
 
       for (const skillName of agentConfig.skills) {

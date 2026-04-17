@@ -16,6 +16,7 @@ import {
 } from "@/api/tauri-api";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
+import { getSessionDisplayTitle } from "@/lib/sessionDisplay";
 
 /** Map frontend agent to backend agent_id. main=主聊 → default; others → agent name. Never use "task" (Heartbeat). */
 function toAgentId(selectedAgentId: string): string {
@@ -42,35 +43,6 @@ function formatSessionTime(ts?: string): string {
   } catch {
     return "";
   }
-}
-
-/**
- * 获取会话显示标题，与 CLI /resume 逻辑一致：
- * - title: 自定义标题或 AI summary（直接使用，不截断）
- * - task: firstPrompt（仅当 title 为空时使用，取第一行最多30字符）
- * - preview: 首条用户消息（仅当 title 和 task 都为空时使用）
- * - id: 最后 fallback 到 session ID
- */
-function getDisplayTitle(
-  session: SessionItem,
-  preview?: string
-): string {
-  // 优先使用 title（CLI: customTitle || summary，Sidecar: metadata.name）
-  if (session.title?.trim()) {
-    const title = session.title.trim();
-    // title 过长时截断（防止 UI 溢出）
-    return title.length > 40 ? title.slice(0, 40) + "…" : title;
-  }
-  // title 为空时使用 task（即 firstPrompt），取第一行
-  if (session.task?.trim()) {
-    const firstLine = session.task.split("\n")[0].trim();
-    if (firstLine)
-      return firstLine.length > 30 ? firstLine.slice(0, 30) + "…" : firstLine;
-  }
-  // task 也为空时使用 preview（首条用户消息）
-  if (preview) return preview;
-  // 最后 fallback 到 session ID
-  return session.id?.slice(0, 20) ?? "无标题会话";
 }
 
 export function ConversationHistorySheet({
@@ -232,7 +204,7 @@ export function ConversationHistorySheet({
                       className="flex-1 min-w-0 px-4 py-3 text-left"
                     >
                       <div className="truncate text-sm font-medium text-foreground pr-6">
-                        {getDisplayTitle(s, previews[s.id])}
+                        {getSessionDisplayTitle(s, previews[s.id], 40)}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1">
                         {formatSessionTime(s.updated_at ?? s.created_at)}

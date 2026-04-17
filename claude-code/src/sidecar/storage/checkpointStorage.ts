@@ -12,12 +12,15 @@
 
 import { homedir } from 'os'
 import { join } from 'path'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { readdir, stat, unlink, rm } from 'fs/promises'
 import { existsSync } from 'fs'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────────
 
-const CHECKPOINT_BASE_DIR = join(homedir(), '.claude', 'checkpoints')
+function getCheckpointBaseDir(): string {
+  return join(getClaudeConfigHomeDir(), 'checkpoints')
+}
 
 // ─── CheckpointStorage 实现 ────────────────────────────────────────────────────
 
@@ -31,7 +34,7 @@ export class CheckpointStorage {
   private readonly baseDir: string
 
   constructor(baseDir?: string) {
-    this.baseDir = baseDir ?? CHECKPOINT_BASE_DIR
+    this.baseDir = baseDir ?? getCheckpointBaseDir()
   }
 
   /**

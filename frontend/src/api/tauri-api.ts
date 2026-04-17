@@ -643,6 +643,14 @@ export async function getRunningAgents(): Promise<string[]> {
 
 
 /**
+ * 会话查询中的 agent_id 需要映射到 Rust 路由用的 agentId。
+ * 前端用 "default" 表示 main agent 的会话，但 Rust sidecar 实例 key 是 "main"。
+ */
+function toRoutingAgentId(agentId?: string): string {
+  return agentId === "default" ? "main" : (agentId ?? "main");
+}
+
+/**
  * 获取会话列表
  * @param params.agentId - 目标 Agent 实例 ID，用于路由到对应 Sidecar（默认 "main"）
  * @param params.cwd - 工作目录，用于过滤该目录下的会话
@@ -654,22 +662,22 @@ export async function getSessions(params?: {
   /** 是否包含系统会话（Heartbeat/Cron）。默认 false */
   include_system?: boolean;
 }): Promise<SessionItem[]> {
-  // 将 agent_id 提升为 agentId 传给 Rust 层，用于路由到正确 sidecar
+  // agent_id 用于 sidecar 内部过滤，Rust 路由需要将 "default" 映射回 "main"
   const { agent_id, ...rpcParams } = params ?? {};
-  const agentId = agent_id ?? "main";
+  const routingAgentId = toRoutingAgentId(agent_id);
   try {
     // 非 main agent 使用 safeInvoke（不重试），避免等待 SIDECAR_NOT_RUNNING 重试延迟
-    const invoker = agentId === "main" ? retryableInvoke : safeInvoke;
+    const invoker = routingAgentId === "main" ? retryableInvoke : safeInvoke;
     return await invoker<SessionItem[]>("agent_send_request", {
-      agentId,
+      agentId: routingAgentId,
       method: "getSessions",
-      params: rpcParams,
+      params: { agent_id, ...rpcParams },
     });
   } catch (e) {
     // 非 main agent 的 sidecar 可能尚未启动，优雅降级返回空数组
     const msg = e instanceof Error ? e.message : String(e);
-    if (agentId !== "main" && msg.includes("SIDECAR_NOT_RUNNING")) {
-      console.debug(`[getSessions] agent=${agentId} sidecar 未启动，返回空会话列表`);
+    if (routingAgentId !== "main" && msg.includes("SIDECAR_NOT_RUNNING")) {
+      console.debug(`[getSessions] agent=${routingAgentId} sidecar 未启动，返回空会话列表`);
       return [];
     }
     throw e;
@@ -688,7 +696,7 @@ export async function getSessionMessages(
   opts?: { offset?: number; limit?: number; cwd?: string }
 ): Promise<SessionMessage[]> {
   return retryableInvoke<SessionMessage[]>("agent_send_request", {
-    agentId: agentId ?? "main",
+    agentId: toRoutingAgentId(agentId),
     method: "getSessionMessages",
     params: { sessionId, ...(opts ?? {}) },
   });
@@ -704,7 +712,7 @@ export async function deleteSession(
   agentId?: string
 ): Promise<void> {
   return retryableInvoke<void>("agent_send_request", {
-    agentId: agentId ?? "main",
+    agentId: toRoutingAgentId(agentId),
     method: "deleteSession",
     params: { sessionId },
   });

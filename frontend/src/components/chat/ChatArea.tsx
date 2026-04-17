@@ -7,7 +7,7 @@ import {
   ensureAgent,
   type SessionMessage,
 } from "@/api/tauri-api";
-import { MessageBubble, type StreamMeta } from "./MessageBubble";
+import { MessageBubble } from "./MessageBubble";
 import { InputArea } from "./InputArea";
 import { PermissionDialog } from "./PermissionDialog";
 import { AskUserQuestionDialog } from "./AskUserQuestionDialog";
@@ -131,7 +131,12 @@ export function ChatArea({ agentId }: ChatAreaProps) {
 
     const newSessionId = loadPersistedBackendSession(agentId, currentCwd);
     setActiveBackendSessionId(newSessionId);
-  }, [agentId, currentCwd]);
+
+    // 切换工作目录后必须触发消息重新加载，否则 isInitialLoadRef 为 false 会导致加载 effect 直接跳过
+    if (isCwdChanged) {
+      bumpChatHistoryReload();
+    }
+  }, [agentId, currentCwd, bumpChatHistoryReload]);
 
   // 权限状态
   const pendingRequest = usePermissionStore((s) => s.pendingRequest);
@@ -156,7 +161,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
-  const streamMetaRef = useRef<StreamMeta>({
+  const streamMetaRef = useRef<{ startTime: number; tokenEstimate: number; isThinking: boolean }>({
     startTime: 0,
     tokenEstimate: 0,
     isThinking: false,
@@ -907,7 +912,6 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                     <MessageBubble
                       message={m}
                       streaming={loading && m.role === "assistant" && i === messages.length - 1}
-                      streamMeta={loading && m.role === "assistant" && i === messages.length - 1 ? streamMetaRef.current : undefined}
                       onRetry={
                         m.role === "assistant" && m.content.startsWith("❌") && i > 0
                           ? () => handleRetry(messages[i - 1].content)

@@ -4,7 +4,7 @@
  * 会话数据文件系统持久化层。
  *
  * 存储结构：
- *   ~/.claude/sessions/
+ *   ${CLAUDE_CONFIG_DIR:-~/.claude}/sessions/
  *     sessions-index.json          # SessionMetadata[] 索引文件
  *     {sessionId}/
  *       metadata.json              # SessionMetadata
@@ -23,7 +23,11 @@ import { existsSync } from 'fs'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────────
 
-const STORAGE_DIR = join(homedir(), '.claude', 'sessions')
+function getStorageDir(): string {
+  return join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), '.claude', 'sessions')
+}
+
+const STORAGE_DIR = getStorageDir()
 const INDEX_FILE = join(STORAGE_DIR, 'sessions-index.json')
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────

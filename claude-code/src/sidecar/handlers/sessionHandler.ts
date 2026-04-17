@@ -13,7 +13,7 @@
  */
 
 import { z } from 'zod'
-import { readFile } from 'fs/promises'
+import { readFile, unlink } from 'fs/promises'
 import {
   getTotalCost,
   getTotalInputTokens,
@@ -34,6 +34,16 @@ import { getTotalToolDuration } from '../../bootstrap/state.js'
 import type { JsonRpcServer } from '../jsonRpcServer'
 import { listSessionsImpl } from '../../utils/listSessionsImpl.js'
 import { extractLastJsonStringField, readSessionLite, resolveSessionFilePath } from '../../utils/sessionStoragePortable.js'
+
+// 辅助函数：统一处理 main agent 的两种标识（"main" 和 "default"）
+function isMainAgentId(id: string | undefined): boolean {
+  return id === 'main' || id === 'default'
+}
+
+function agentIdMatches(a: string | undefined, b: string | undefined): boolean {
+  if (a === b) return true
+  return isMainAgentId(a) && isMainAgentId(b)
+}
 
 // ─── 参数 Schema ───────────────────────────────────────────────────────────────
 
@@ -188,8 +198,8 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
           // 注意：前端 main agent 对应 backend "default"，CLI 会话如果没有 agentName 字段，默认应为 "default"
           const sessionAgentId = agentName || 'default'
 
-          // 如果请求了特定 agent_id，只返回匹配的会话
-          if (requestedAgentId && sessionAgentId !== requestedAgentId) {
+          // 如果请求了特定 agent_id，只返回匹配的会话（main agent 的 "main"/"default" 视为等价）
+          if (requestedAgentId && !agentIdMatches(sessionAgentId, requestedAgentId)) {
             continue
           }
 
@@ -220,28 +230,26 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
           if (seenIds.has(s.id)) continue
 
           // 当前 sidecar 进程对应的 agent 身份（由 Rust 启动时通过 AGENT_ID 环境变量注入）
-          // 注意：前端 main agent 对应 backend "default"
           const sessionAgentId = process.env.AGENT_ID ?? 'default'
 
-          // 如果请求了特定 agent_id，只返回匹配的会话
-          if (requestedAgentId && sessionAgentId !== requestedAgentId) {
+          // 如果请求了特定 agent_id，只返回匹配的会话（main agent 的 "main"/"default" 视为等价）
+          if (requestedAgentId && !agentIdMatches(sessionAgentId, requestedAgentId)) {
             continue
           }
 
-          // 如果请求了特定 cwd，按 cwd 过滤（仅显示属于请求目录的会话）
-          if (requestedCwd && s.cwd && s.cwd !== requestedCwd) {
+          // Sidecar 会话没有独立的 cwd 字段，使用 agentCore 的当前 cwd
+          const sidecarCwd = agentCore.getState().cwd || undefined
+
+          // 如果请求了特定 cwd，按 cwd 过滤
+          if (requestedCwd && sidecarCwd && sidecarCwd !== requestedCwd) {
             continue
           }
 
-          // 跳过没有有意义标题的 sidecar 会话（这些会话的消息尚未写入 CLI 文件）
-          // 只有当 CLI 文件存在对应会话时才添加
-          // 由于 CLI 和 Sidecar 使用不同的 sessionId 生成方式（文件名校名 vs UUID），
-          // 这里无法准确匹配，通常 Sidecar 会话的 cwd 应该是 CLI cwd 的子集
-          const title = (s.metadata?.['name'] as string | undefined)
-          // 如果标题是 Session xxx 格式，说明是新会话且尚未写入 CLI，跳过
-          if (!title || title.startsWith('Session ')) {
-            continue
-          }
+          // 修复：不再跳过默认标题的 sidecar 会话。
+          // AgentCore 现在会在 execute/createSession 时调用 switchSession，
+          // 使 CLI .jsonl 和 sidecar storage 的 sessionId 保持一致，
+          // seenIds 已能正确去重。保留 sidecar 会话作为 CLI 缺失时的 fallback。
+          const title = (s.metadata?.['name'] as string | undefined) || `Session ${s.id.slice(0, 8)}`
 
           seenIds.add(s.id)
           allSessions.push({
@@ -251,7 +259,7 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
             agent_id: sessionAgentId,
             created_at: s.createdAt,
             updated_at: s.updatedAt,
-            cwd: s.cwd,
+            cwd: sidecarCwd,
           })
         }
       } catch (err) {
@@ -462,12 +470,26 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
     async (params: unknown): Promise<DeleteSessionResult> => {
       const { sessionId } = DeleteSessionParamsSchema.parse(params)
 
+      let deleted = false
       try {
-        const deleted = await agentCore.deleteSession(sessionId)
-        return { deleted }
+        deleted = await agentCore.deleteSession(sessionId)
       } catch {
-        return { deleted: false }
+        // sidecar 删除失败也不中断，继续尝试删除 CLI 文件
       }
+
+      // 同时删除 CLI 会话文件（如果存在）
+      try {
+        const cwd = agentCore.getState().cwd
+        const resolved = await resolveSessionFilePath(sessionId, cwd)
+        if (resolved) {
+          await unlink(resolved.filePath)
+          deleted = true
+        }
+      } catch {
+        // CLI 文件不存在或删除失败，忽略
+      }
+
+      return { deleted }
     },
   )
 

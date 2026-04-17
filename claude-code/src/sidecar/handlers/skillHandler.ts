@@ -365,7 +365,7 @@ async function createSkill(params: {
     throw new Error('参数 name 不能为空')
   }
 
-  const userSkillsDir = join(homedir(), '.claude', 'skills', params.name)
+  const userSkillsDir = join(getClaudeConfigHomeDir(), 'skills', params.name)
   const skillMdPath = join(userSkillsDir, 'SKILL.md')
 
   // 创建目录

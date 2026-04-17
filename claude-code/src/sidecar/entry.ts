@@ -48,6 +48,7 @@ import { SidecarCronScheduler } from './cronScheduler.js'
 import { readJobs, writeJobs } from './handlers/cronHandler.js'
 import { join } from 'path'
 import { homedir } from 'os'
+import { getClaudeConfigHomeDir } from '../utils/envUtils.js'
 import { mkdir } from 'fs/promises'
 import { restoreCostStateForSession, saveCurrentSessionCosts } from '../cost-tracker.js'
 
@@ -252,7 +253,7 @@ async function main(): Promise<void> {
   // 2. 初始化 SessionStorage
   let sessionStorage: SessionStorage | undefined
   if (agentConfig.persistSession !== false) {
-    const sessionDir = join(homedir(), '.claude', 'sessions', agentId)
+    const sessionDir = join(getClaudeConfigHomeDir(), 'sessions', agentId)
     log('INFO', `Session 存储目录: ${sessionDir}`)
     try {
       await mkdir(sessionDir, { recursive: true })
