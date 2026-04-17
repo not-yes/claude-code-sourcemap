@@ -239,7 +239,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
 
       // 仅做后端会话健康检查（不覆盖本地消息）
       if (activeBackendSessionId) {
-        getSessionMessages(activeBackendSessionId, agentId, { limit: 1 })
+        getSessionMessages(activeBackendSessionId, agentId, { limit: 1, cwd: currentCwd })
           .catch(() => {
             // 后端会话已失效，清空绑定
             savePersistedBackendSession(agentId, null, currentCwd);
@@ -249,7 +249,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     } else if (activeBackendSessionId) {
       // 本地没有，从后端加载（降级为纯文本）
       setLoadingHistory(true);
-      getSessionMessages(activeBackendSessionId, agentId, { limit: PAGE_SIZE * 10 })
+      getSessionMessages(activeBackendSessionId, agentId, { limit: PAGE_SIZE * 10, cwd: currentCwd })
         .then(async (fullList) => {
           const total = fullList.length;
           if (total <= PAGE_SIZE) {
@@ -260,7 +260,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             backendOffsetRef.current = 0;
           } else {
             const startOffset = total - PAGE_SIZE;
-            const latest = await getSessionMessages(activeBackendSessionId, agentId, { offset: startOffset, limit: PAGE_SIZE });
+            const latest = await getSessionMessages(activeBackendSessionId, agentId, { offset: startOffset, limit: PAGE_SIZE, cwd: currentCwd });
             const converted = latest.map((m, i) => sessionMessageToMessage(m, startOffset + i));
             setMessages(converted.length > MAX_MESSAGES_IN_MEMORY ? converted.slice(-MAX_MESSAGES_IN_MEMORY) : converted);
             setIsTruncated(converted.length > MAX_MESSAGES_IN_MEMORY);
@@ -767,7 +767,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
         }
         const newStartOffset = Math.max(0, currentStartOffset - PAGE_SIZE);
         const fetchLimit = currentStartOffset - newStartOffset;
-        const older = await getSessionMessages(activeBackendSessionId, agentId, { offset: newStartOffset, limit: fetchLimit });
+        const older = await getSessionMessages(activeBackendSessionId, agentId, { offset: newStartOffset, limit: fetchLimit, cwd: currentCwd });
         if (older.length === 0) {
           setHasMoreMessages(false);
         } else {
