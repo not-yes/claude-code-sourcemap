@@ -5,10 +5,9 @@ import {
   PopoverContent,
   PopoverAnchor,
 } from "@/components/ui/popover";
-import { Send, Square, Bot } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAgents } from "@/hooks/useAgents";
-import { useAgentMetadataStore } from "@/stores/agentMetadataStore";
+import { SLASH_COMMANDS } from "@/constants/slashCommands";
 
 interface InputAreaProps {
   onSend: (content: string) => Promise<void>;
@@ -17,11 +16,14 @@ interface InputAreaProps {
   onStop?: () => void;
 }
 
-/** Parse @mention state: returns { query, startIndex } when in @ mode */
-function parseMention(value: string): { query: string; startIndex: number } | null {
-  const match = value.match(/@([\w-]*)$/);
+/** Parse slash-command state based on cursor position */
+function parseSlash(value: string, cursorPos: number): { query: string; startIndex: number } | null {
+  const beforeCursor = value.slice(0, cursorPos);
+  // Trigger when / is preceded by start-of-string or whitespace
+  const match = beforeCursor.match(/(^|\s)\/([\p{L}\p{N}_-]*)$/u);
   if (!match) return null;
-  return { query: match[1].toLowerCase(), startIndex: match.index ?? 0 };
+  const startIndex = beforeCursor.lastIndexOf("/", beforeCursor.length - 1);
+  return { query: match[2].toLowerCase(), startIndex };
 }
 
 export function InputArea({
@@ -32,44 +34,58 @@ export function InputArea({
 }: InputAreaProps) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
-  const [mentionOpen, setMentionOpen] = useState(false);
-  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerMode, setPickerMode] = useState<"slash" | null>(null);
+  const [pickerIndex, setPickerIndex] = useState(0);
+  const [cursorPos, setCursorPos] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastEnterTimeRef = useRef<number>(0);
   const valueRef = useRef<string>("");
+  const lastSlashQueryRef = useRef<string | null>(null);
 
-  const { agents } = useAgents();
-  const getMeta = useAgentMetadataStore((s) => s.get);
+  const slashState = parseSlash(value, cursorPos);
 
-  const mentionState = parseMention(value);
-  const filteredAgents = useMemo(() => {
-    const state = parseMention(value);
-    if (!state) return [];
-    const allAgents = [{ id: "main", name: "main" }, ...agents];
-    return allAgents.filter((a) =>
-      a.name.toLowerCase().includes(state.query)
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashState) return [];
+    return SLASH_COMMANDS.filter((c) =>
+      c.name.toLowerCase().includes(slashState.query) ||
+      c.aliases?.some((a) => a.toLowerCase().includes(slashState.query))
     );
-  }, [value, agents]);
+  }, [slashState]);
 
   useEffect(() => {
-    if (mentionState && filteredAgents.length > 0) {
-      setMentionOpen(true);
-      setMentionSelectedIndex(0);
+    if (slashState && filteredSlashCommands.length > 0) {
+      const shouldResetIndex = pickerMode !== "slash" || lastSlashQueryRef.current !== slashState.query;
+      lastSlashQueryRef.current = slashState.query;
+      setPickerOpen(true);
+      setPickerMode("slash");
+      if (shouldResetIndex) setPickerIndex(0);
     } else {
-      setMentionOpen(false);
+      setPickerOpen(false);
+      setPickerMode(null);
+      lastSlashQueryRef.current = null;
     }
-  }, [mentionState, filteredAgents.length]);
+  }, [slashState, filteredSlashCommands.length, pickerMode]);
 
-  const insertMention = useCallback(
-    (agentName: string) => {
-      if (!mentionState) return;
-      const before = value.slice(0, mentionState.startIndex);
-      const newValue = `${before}@${agentName} `;
+  const insertSlash = useCallback(
+    (cmdName: string, startIndex: number) => {
+      const before = value.slice(0, startIndex);
+      const after = value.slice(cursorPos);
+      const newValue = `${before}/${cmdName} ${after}`;
       setValue(newValue);
-      setMentionOpen(false);
-      textareaRef.current?.focus();
+      valueRef.current = newValue;
+      setPickerOpen(false);
+      // Move cursor after the inserted command + space
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (el) {
+          const pos = startIndex + cmdName.length + 2;
+          el.setSelectionRange(pos, pos);
+          el.focus();
+        }
+      });
     },
-    [value, mentionState]
+    [value, cursorPos]
   );
 
   const handleSend = useCallback(async () => {
@@ -92,29 +108,26 @@ export function InputArea({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (mentionOpen && filteredAgents.length > 0) {
+      if (pickerOpen && pickerMode === "slash" && filteredSlashCommands.length > 0) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setMentionSelectedIndex((i) =>
-            i < filteredAgents.length - 1 ? i + 1 : 0
-          );
+          setPickerIndex((i) => (i < filteredSlashCommands.length - 1 ? i + 1 : 0));
           return;
         }
         if (e.key === "ArrowUp") {
           e.preventDefault();
-          setMentionSelectedIndex((i) =>
-            i > 0 ? i - 1 : filteredAgents.length - 1
-          );
+          setPickerIndex((i) => (i > 0 ? i - 1 : filteredSlashCommands.length - 1));
           return;
         }
         if (e.key === "Enter" || e.key === "Tab") {
           e.preventDefault();
-          const agent = filteredAgents[mentionSelectedIndex];
-          if (agent) insertMention(agent.name);
+          const cmd = filteredSlashCommands[pickerIndex];
+          const ss = parseSlash(value, cursorPos);
+          if (cmd && ss) insertSlash(cmd.name, ss.startIndex);
           return;
         }
         if (e.key === "Escape") {
-          setMentionOpen(false);
+          setPickerOpen(false);
           return;
         }
       }
@@ -160,11 +173,14 @@ export function InputArea({
       }
     },
     [
-      mentionOpen,
-      filteredAgents,
-      mentionSelectedIndex,
-      insertMention,
+      pickerOpen,
+      pickerMode,
+      filteredSlashCommands,
+      pickerIndex,
+      insertSlash,
       handleSend,
+      value,
+      cursorPos,
     ]
   );
 
@@ -184,9 +200,22 @@ export function InputArea({
     adjustHeight();
   }, [value, adjustHeight]);
 
+  // Auto-scroll picker to keep the active item in view
+  useEffect(() => {
+    if (!pickerOpen) return;
+    // small delay to ensure DOM has updated
+    const id = setTimeout(() => {
+      const activeEl = document.querySelector('[data-active="true"]') as HTMLElement | null;
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [pickerIndex, pickerMode, pickerOpen]);
+
   return (
     <div className="px-4 py-4">
-      <Popover open={mentionOpen} onOpenChange={setMentionOpen}>
+      <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
         <PopoverAnchor asChild>
           <div
             className={cn(
@@ -198,14 +227,21 @@ export function InputArea({
             <Textarea
               ref={textareaRef}
               value={value}
-              onChange={(e) => {
-                setValue(e.target.value);
-                valueRef.current = e.target.value;
-              }}
-              placeholder="输入任务指令，输入 @ 提及 Agent，Shift+Enter 或双击 Enter 发送..."
+              placeholder="输入任务指令，/ 使用快捷命令，Shift+Enter 或双击 Enter 发送..."
               className="min-h-9 max-h-[6rem] resize-none border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-foreground placeholder:text-muted-foreground/70 placeholder:dark:text-muted-foreground/60"
               rows={1}
               disabled={disabled}
+              onChange={(e) => {
+                setValue(e.target.value);
+                valueRef.current = e.target.value;
+                setCursorPos(e.target.selectionStart ?? 0);
+              }}
+              onKeyUp={(e) => {
+                setCursorPos((e.target as HTMLTextAreaElement).selectionStart ?? 0);
+              }}
+              onClick={(e) => {
+                setCursorPos(e.currentTarget.selectionStart ?? 0);
+              }}
               onKeyDown={handleKeyDown}
             />
             {showStop ? (
@@ -240,36 +276,45 @@ export function InputArea({
           className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-auto p-0"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          {filteredAgents.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-muted-foreground">
-              无匹配 Agent
-            </p>
-          ) : (
-            <div className="py-1">
-              {filteredAgents.map((agent, i) => {
-                const meta = getMeta(agent.id);
-                const displayName =
-                  agent.name === "main"
-                    ? meta?.displayName ?? "主聊 (Master)"
-                    : meta?.displayName ?? agent.name;
-                return (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 rounded-sm transition-colors ${
-                      i === mentionSelectedIndex
-                        ? "bg-accent"
-                        : "hover:bg-muted/50"
-                    }`}
-                    onClick={() => insertMention(agent.name)}
-                    onMouseEnter={() => setMentionSelectedIndex(i)}
-                  >
-                    <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{displayName}</span>
-                  </button>
-                );
-              })}
-            </div>
+          {pickerMode === "slash" && (
+            <>
+              {filteredSlashCommands.length === 0 ? (
+                <p className="px-3 py-2 text-sm text-muted-foreground">
+                  无匹配命令
+                </p>
+              ) : (
+                <div className="py-1">
+                  {filteredSlashCommands.map((cmd, i) => (
+                    <div
+                      key={cmd.name}
+                      data-active={i === pickerIndex}
+                      className={`w-full px-3 py-2 text-left text-sm flex flex-col gap-0.5 rounded-sm cursor-pointer transition-colors ${
+                        i === pickerIndex
+                          ? "bg-accent"
+                          : "hover:bg-muted/50"
+                      }`}
+                      onClick={() => {
+                        const ss = parseSlash(value, cursorPos);
+                        if (ss) insertSlash(cmd.name, ss.startIndex);
+                      }}
+                      onMouseEnter={() => setPickerIndex(i)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">/{cmd.name}</span>
+                        {cmd.aliases && cmd.aliases.length > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            别名: {cmd.aliases.join(", ")}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground truncate">
+                        {cmd.description}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </PopoverContent>
       </Popover>
