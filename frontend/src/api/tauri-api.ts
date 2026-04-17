@@ -953,6 +953,7 @@ export async function addCronJob(params: {
   schedule_type?: "cron" | "at" | "every";
   instruction: string;
   enabled?: boolean;
+  agent_id?: string;
 }): Promise<{ job_id: string }> {
   return retryableInvoke<{ job_id: string }>("agent_send_request", {
     method: "addCronJob",
@@ -971,6 +972,7 @@ export async function updateCronJob(
     schedule_type?: "cron" | "at" | "every";
     instruction?: string;
     enabled?: boolean;
+    agent_id?: string;
   }
 ): Promise<void> {
   return retryableInvoke<void>("agent_send_request", {
@@ -1384,6 +1386,7 @@ export interface CronCompleteEvent {
   type: "job_complete";
   jobId: string;
   jobName: string;
+  agentId?: string;
   success: boolean;
   output: string;
   error?: string | null;

@@ -180,6 +180,21 @@
     animation: pulse-glow 2s ease-in-out infinite;
   }
 
+  @keyframes compact-dot {
+    0%, 80%, 100% {
+      opacity: 0.3;
+      transform: scale(0.8);
+    }
+    40% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .animate-compact-dot {
+    animation: compact-dot 1.2s ease-in-out infinite;
+  }
+
   /* Staggered children animation */
   .stagger-children > * {
     opacity: 0;

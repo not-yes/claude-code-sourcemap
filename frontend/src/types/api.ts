@@ -114,6 +114,7 @@ export interface CronJob {
   schedule: string;
   enabled: boolean;
   instruction: string;
+  agent_id?: string;
   last_run?: number;
   next_run?: number;
   run_count: number;
