@@ -500,6 +500,12 @@ class AgentCoreImpl implements AgentCore {
         const { switchSession } = await import('../bootstrap/state.js')
         const { getProjectDir } = await import('../utils/sessionStoragePortable.js')
         switchSession(asSessionId(this.activeSessionId), getProjectDir(runtimeCwd))
+
+        // 非 main agent 需要将 agentName 写入 .jsonl，以便 getSessions 正确按 agent 过滤历史
+        if (options?.agentId && options.agentId !== 'main') {
+          const { saveAgentName } = await import('../utils/sessionStorage.js')
+          await saveAgentName(this.activeSessionId as any, options.agentId).catch(() => undefined)
+        }
       }
 
       // 获取工具列表（已筛选的）

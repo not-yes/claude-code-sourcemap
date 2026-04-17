@@ -196,8 +196,9 @@ export function registerSessionHandlers(server: JsonRpcServer): void {
           }
 
           // 注意：前端 main agent 对应 backend "default"
-          // CLI 会话如果没有 agentName 字段，优先使用当前 sidecar 的 AGENT_ID，最后 fallback 到 "default"
-          const sessionAgentId = agentName || process.env.AGENT_ID || 'default'
+          // CLI 会话如果没有 agentName 字段，默认归属 main agent（"default"），
+          // 这样非 main agent 的会话必须显式带有 agent-name 记录才能被匹配到。
+          const sessionAgentId = agentName || 'default'
 
           // 如果请求了特定 agent_id，只返回匹配的会话（main agent 的 "main"/"default" 视为等价）
           if (requestedAgentId && !agentIdMatches(sessionAgentId, requestedAgentId)) {
