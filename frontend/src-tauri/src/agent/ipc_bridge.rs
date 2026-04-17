@@ -663,8 +663,28 @@ impl IpcBridge {
             (_, Some("$/cron")) => {
                 use tauri::Emitter;
                 let payload = msg.get("params").cloned().unwrap_or(serde_json::Value::Null);
-                let _ = app_handle.emit(&format!("agent:{}:cron-complete", agent_id), &payload);
-                log::info!("IpcBridge: Cron 任务完成通知已转发");
+                // 优先使用 payload 中的 agentId，实现多 agent 任务路由
+                let target_agent_id = payload
+                    .get("agentId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&agent_id);
+                let _ = app_handle.emit(&format!("agent:{}:cron-complete", target_agent_id), &payload);
+                log::info!("IpcBridge: Cron 任务完成通知已转发 agent={}", target_agent_id);
+            }
+
+            // Compacting 状态通知：转发到前端
+            (_, Some("$/compacting")) => {
+                use tauri::Emitter;
+                let payload = msg.get("params").cloned().unwrap_or(serde_json::Value::Null);
+                let _ = app_handle.emit(&format!("agent:{}:compacting", agent_id), &payload);
+                log::info!("IpcBridge: Compacting 状态已转发到前端");
+            }
+
+            // Compacting 完成通知：转发到前端
+            (_, Some("$/compactingComplete")) => {
+                use tauri::Emitter;
+                let _ = app_handle.emit(&format!("agent:{}:compacting-complete", agent_id), ());
+                log::info!("IpcBridge: Compacting 完成已转发到前端");
             }
 
             // 权限请求：通过 Tauri Event 转发到前端，等待用户响应后回传

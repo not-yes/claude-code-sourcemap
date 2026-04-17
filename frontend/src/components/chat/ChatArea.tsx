@@ -34,7 +34,9 @@ import {
 import type { Message, MessageContentBlock, TokenUsage } from "@/types";
 import { toast } from "sonner";
 import { useLogStore } from "@/stores/logStore";
+import { useUnreadStore } from "@/stores/unreadStore";
 import { useState, useCallback, useEffect, useRef } from "react";
+import { CompactingIndicator } from "./CompactingIndicator";
 import {
   Lightbulb,
   FileText,
@@ -157,6 +159,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [compacting, setCompacting] = useState(false);
+  const [contextPercent, setContextPercent] = useState<number | undefined>(undefined);
   
   // Refs
   const inFlightRef = useRef(false);
@@ -351,6 +355,59 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       unlisten?.();
     };
   }, [agentId, setPendingRequest]);
+
+  // Compacting 状态监听
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let unmounted = false;
+
+    if (typeof window === 'undefined' || !('__TAURI__' in window)) {
+      return;
+    }
+
+    const eventName = buildAgentEventName(agentId, "compacting");
+    listen<{ contextPercent: number }>(eventName, (event) => {
+      if (unmounted) return;
+      const { contextPercent } = event.payload;
+      setContextPercent(contextPercent);
+      setCompacting(true);
+    }).then((fn) => {
+      if (!unmounted) {
+        unlisten = fn;
+      }
+    });
+
+    return () => {
+      unmounted = true;
+      unlisten?.();
+    };
+  }, [agentId]);
+
+  // Compacting 完成监听
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let unmounted = false;
+
+    if (typeof window === 'undefined' || !('__TAURI__' in window)) {
+      return;
+    }
+
+    const eventName = buildAgentEventName(agentId, "compacting-complete");
+    listen(eventName, () => {
+      if (unmounted) return;
+      setCompacting(false);
+      // 不清除 contextPercent，保留最后一个值作为常驻显示
+    }).then((fn) => {
+      if (!unmounted) {
+        unlisten = fn;
+      }
+    });
+
+    return () => {
+      unmounted = true;
+      unlisten?.();
+    };
+  }, [agentId]);
 
   // 启动 Agent
   useEffect(() => {
@@ -955,6 +1012,11 @@ export function ChatArea({ agentId }: ChatAreaProps) {
             <StopCircle className="h-3.5 w-3.5" />
             中止
           </button>
+        </div>
+      )}
+      {messages.length > 0 && (
+        <div className="flex justify-center py-2 -mt-2">
+          <CompactingIndicator contextPercent={contextPercent} compacting={compacting} />
         </div>
       )}
       {pendingRequest?.tool === "ExitPlanMode" && (

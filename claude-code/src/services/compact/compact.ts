@@ -9,7 +9,7 @@ const sessionTranscriptModule = feature('KAIROS')
 
 import { APIUserAbortError } from '@anthropic-ai/sdk'
 import { markPostCompaction } from 'src/bootstrap/state.js'
-import { getInvokedSkillsForAgent } from '../../bootstrap/state.js'
+import { getInvokedSkillsForAgent, getSdkBetas } from '../../bootstrap/state.js'
 import type { QuerySource } from '../../constants/querySource.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import type { Tool, ToolUseContext } from '../../Tool.js'
@@ -39,7 +39,7 @@ import {
   getMcpInstructionsDeltaAttachment,
 } from '../../utils/attachments.js'
 import { getMemoryPath } from '../../utils/config.js'
-import { COMPACT_MAX_OUTPUT_TOKENS } from '../../utils/context.js'
+import { COMPACT_MAX_OUTPUT_TOKENS, getContextWindowForModel } from '../../utils/context.js'
 import {
   analyzeContext,
   tokenStatsToStatsigMetrics,
@@ -129,6 +129,23 @@ export const POST_COMPACT_MAX_TOKENS_PER_FILE = 5_000
 export const POST_COMPACT_MAX_TOKENS_PER_SKILL = 5_000
 export const POST_COMPACT_SKILLS_TOKEN_BUDGET = 25_000
 const MAX_COMPACT_STREAMING_RETRIES = 2
+
+/**
+ * 发送 JSON-RPC notification 到 stdout，用于通知前端 compacting 状态
+ */
+function sendCompactingNotification(
+  method: '$/compacting' | '$/compactingComplete',
+  contextPercent?: number,
+): void {
+  const notification = {
+    jsonrpc: '2.0',
+    method,
+    ...(method === '$/compacting' && contextPercent !== undefined
+      ? { params: { contextPercent } }
+      : { params: undefined }),
+  }
+  process.stdout.write(JSON.stringify(notification) + '\n')
+}
 
 /**
  * Strip image blocks from user messages before sending for compaction.
@@ -410,6 +427,13 @@ export async function compactConversation(
 
     // Execute PreCompact hooks
     context.setSDKStatus?.('compacting')
+    // 通知前端 compacting 状态
+    const model = appState.mainLoopModelForSession
+    const contextWindow = model ? getContextWindowForModel(model, getSdkBetas()) : undefined
+    const contextPercent = contextWindow
+      ? Math.min(100, Math.round((preCompactTokenCount / contextWindow) * 100))
+      : undefined
+    sendCompactingNotification('$/compacting', contextPercent)
     const hookResult = await executePreCompactHooks(
       {
         trigger: isAutoCompact ? 'auto' : 'manual',
@@ -759,6 +783,8 @@ export async function compactConversation(
     context.setResponseLength?.(() => 0)
     context.onCompactProgress?.({ type: 'compact_end' })
     context.setSDKStatus?.(null)
+    // 通知前端 compacting 完成
+    sendCompactingNotification('$/compactingComplete')
   }
 }
 
@@ -815,6 +841,14 @@ export async function partialCompactConversation(
     })
 
     context.setSDKStatus?.('compacting')
+    // 通知前端 compacting 状态
+    const appState = context.getAppState()
+    const model = appState.mainLoopModelForSession
+    const contextWindow = model ? getContextWindowForModel(model, getSdkBetas()) : undefined
+    const contextPercent = contextWindow
+      ? Math.min(100, Math.round((preCompactTokenCount / contextWindow) * 100))
+      : undefined
+    sendCompactingNotification('$/compacting', contextPercent)
     const hookResult = await executePreCompactHooks(
       {
         trigger: 'manual',
@@ -1102,6 +1136,8 @@ export async function partialCompactConversation(
     context.setResponseLength?.(() => 0)
     context.onCompactProgress?.({ type: 'compact_end' })
     context.setSDKStatus?.(null)
+    // 通知前端 compacting 完成
+    sendCompactingNotification('$/compactingComplete')
   }
 }
 
