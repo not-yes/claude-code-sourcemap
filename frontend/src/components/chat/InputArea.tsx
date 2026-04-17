@@ -45,7 +45,7 @@ export function InputArea({
   const [cursorPos, setCursorPos] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastEnterTimeRef = useRef<number>(0);
-  const valueRef = useRef<string>("");
+  const valueRef = useRef<string>(agentInputDrafts[agentId] ?? "");
   const lastSlashQueryRef = useRef<string | null>(null);
 
   const slashState = parseSlash(value, cursorPos);
@@ -79,6 +79,7 @@ export function InputArea({
       const newValue = `${before}/${cmdName} ${after}`;
       setValue(newValue);
       valueRef.current = newValue;
+      setAgentInputDraft(agentId, newValue);
       setPickerOpen(false);
       // Move cursor after the inserted command + space
       requestAnimationFrame(() => {
@@ -90,7 +91,7 @@ export function InputArea({
         }
       });
     },
-    [value, cursorPos]
+    [value, cursorPos, agentId, setAgentInputDraft]
   );
 
   const handleSend = useCallback(async () => {

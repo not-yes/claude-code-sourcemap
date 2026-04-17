@@ -18,6 +18,8 @@ function CompactDot() {
 }
 
 export function CompactingIndicator({ contextPercent, compacting, className }: CompactingIndicatorProps) {
+  if (contextPercent === undefined && !compacting) return null;
+
   return (
     <div
       className={cn(

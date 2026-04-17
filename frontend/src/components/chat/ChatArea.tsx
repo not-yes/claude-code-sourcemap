@@ -49,7 +49,6 @@ import {
   History,
   GitBranch,
   MoreVertical,
-  StopCircle,
   ChevronUp,
   Bot,
 } from "lucide-react";
@@ -298,6 +297,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
         saveMessages(sessionId, fullList.map((m, i) => sessionMessageToMessage(m, i)), currentCwd);
         // 同步 backendSessionId
         savePersistedBackendSession(agentId, sessionId, currentCwd);
+        setActiveBackendSessionId(sessionId);
       } catch (err) {
         console.warn('[ChatArea] 从后端加载消息失败:', err);
         applyLocalMessages();
@@ -1053,18 +1053,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
           </div>
         )}
       </div>
-      {loading && (
-        <div className="flex justify-center px-4 pb-2">
-          <button
-            type="button"
-            onClick={handleStop}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20 hover:scale-105 active:scale-95 transition-all duration-200 animate-pulse-glow"
-          >
-            <StopCircle className="h-3.5 w-3.5" />
-            中止
-          </button>
-        </div>
-      )}
+
       {messages.length > 0 && (
         <div className="flex justify-center py-2 -mt-2">
           <CompactingIndicator contextPercent={contextPercent} compacting={compacting} />
