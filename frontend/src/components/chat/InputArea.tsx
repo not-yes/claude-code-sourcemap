@@ -227,8 +227,8 @@ export function InputArea({
   const handleVoiceInput = useCallback(async () => {
     // 检查浏览器是否支持 mediaDevices
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-      console.error("[InputArea] 麦克风不可用:", typeof navigator, navigator?.mediaDevices?.getUserMedia);
-      setVoiceError("当前浏览器不支持麦克风访问，请确保在 HTTPS 环境或 localhost 下使用");
+      console.error("[InputArea] 麦克风不可用: navigator.mediaDevices.getUserMedia is undefined");
+      setVoiceError("桌面应用暂不支持语音输入，请使用浏览器版本访问");
       return;
     }
 

@@ -112,18 +112,19 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
             <CodeBlock {...props}>{children}</CodeBlock>
           ),
           a: ({ href, children, ...props }) => {
-            const isExternal = href?.startsWith("http://") || href?.startsWith("https://");
+            const resolvedHref = href ?? "";
+            const isExternal = resolvedHref.startsWith("http://") || resolvedHref.startsWith("https://");
             const handleLinkClick = async (e: React.MouseEvent) => {
               if (isExternal) {
                 e.preventDefault();
                 try {
-                  await openPreviewWindow(href);
+                  await openPreviewWindow(resolvedHref);
                 } catch {
                   // 降级：预览窗口创建失败时，回退到系统浏览器
                   try {
-                    await open(href);
+                    await open(resolvedHref);
                   } catch {
-                    window.open(href, "_blank");
+                    window.open(resolvedHref, "_blank");
                   }
                 }
               }
@@ -132,9 +133,9 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
               e.preventDefault();
               e.stopPropagation();
               try {
-                await open(href);
+                await open(resolvedHref);
               } catch {
-                window.open(href, "_blank");
+                window.open(resolvedHref, "_blank");
               }
             };
             return (
