@@ -108,7 +108,7 @@ export function InputArea({
     const rawValue = valueRef.current ?? '';
     const trimmed = typeof rawValue === 'string' ? rawValue.trim() : '';
     console.warn(`[InputArea:handleSend] 进入, sending=${sending}, disabled=${disabled}, loading=${loading}, value长度=${trimmed.length}`);
-    if (!trimmed || sending || disabled || loading) {
+    if (!trimmed || sending || disabled) {
       console.warn(`[InputArea:handleSend] 被阻止! trimmed=${!!trimmed}, sending=${sending}, disabled=${disabled}, loading=${loading}`);
       return;
     }
@@ -202,7 +202,7 @@ export function InputArea({
   );
 
   const canSend =
-    value.trim().length > 0 && !sending && !disabled && !loading;
+    value.trim().length > 0 && !sending && !disabled;
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -230,10 +230,9 @@ export function InputArea({
         console.log("[InputArea] stopAudioRecording returned, length=", base64Audio?.length);
         setIsRecording(false);
 
-        // 将 Base64 WAV 数据转为 data URL 并转写
-        const dataUrl = `data:audio/wav;base64,${base64Audio}`;
+        // 直接传递纯 base64 数据（不需要 data URL 前缀）
         console.log("[InputArea] Calling transcribeAudio()...");
-        const text = await transcribeAudio(dataUrl);
+        const text = await transcribeAudio(base64Audio);
         console.log("[InputArea] transcribeAudio returned:", text);
 
         if (text && text.trim()) {
@@ -389,7 +388,7 @@ export function InputArea({
               </button>
             )}
             {/* 单个按钮：根据输入状态自动切换发送/停止 */}
-            {loading && !canSend && onStop ? (
+            {loading && value.trim().length === 0 && onStop ? (
               <button
                 type="button"
                 onClick={onStop}
