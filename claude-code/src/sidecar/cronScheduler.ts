@@ -53,6 +53,12 @@ export interface CronSchedulerDeps {
 // ─── SidecarCronScheduler ─────────────────────────────────────────────────────
 
 /**
+ * 错过执行后的最大补执行窗口（毫秒）。
+ * 若任务错过的时间超过此值，则跳过本次、等待下一次调度。
+ */
+const CATCH_UP_WINDOW_MS = 3 * 60 * 60 * 1000 // 3 小时
+
+/**
  * Sidecar 模式下的极简 Cron 调度器。
  *
  * 每 30 秒检查一次所有已启用的 cron 类型任务，
@@ -134,7 +140,10 @@ export class SidecarCronScheduler {
         if (!this.nextFireAt.has(job.id)) {
           let nextFire: number | undefined
 
-          if (job.schedule_type === 'cron') {
+          // 优先使用磁盘中的 nextRunAt（重启后避免从旧 lastRunAt 重新计算导致锚点漂移）
+          if (job.nextRunAt !== undefined && !isNaN(job.nextRunAt)) {
+            nextFire = job.nextRunAt
+          } else if (job.schedule_type === 'cron') {
             const fields = parseCronExpression(job.schedule)
             if (!fields) {
               this.deps.log('WARN', `[CronScheduler] 无效的 cron 表达式，跳过任务: ${job.id} schedule="${job.schedule}"`)
@@ -172,42 +181,62 @@ export class SidecarCronScheduler {
         const nextFire = this.nextFireAt.get(job.id)
         if (nextFire === undefined) continue
 
-        // 当前时间已超过或等于下次触发时间，执行任务
+        // 当前时间已超过或等于下次触发时间
         if (now >= nextFire) {
-          this.deps.log('INFO', `[CronScheduler] 触发任务: ${job.id} name="${job.name}" type=${job.schedule_type}`)
+          const missedMs = now - nextFire
+          const shouldExecute = missedMs <= CATCH_UP_WINDOW_MS
 
+          let result: CronJobResult | undefined
           const startTime = Date.now()
-          let result: CronJobResult
 
-          // 执行任务：出错只记录日志，不抛出，确保不影响其他任务的检查
-          try {
-            result = await this.deps.executeJob(job.id, job.name, job.instruction, job.agent_id ?? 'main')
-          } catch (err: unknown) {
-            result = {
-              success: false,
-              output: '',
-              error: err instanceof Error ? err.message : String(err),
-              duration_ms: Date.now() - startTime,
+          if (shouldExecute) {
+            // 在补执行窗口内：正常执行任务
+            this.deps.log(
+              'INFO',
+              `[CronScheduler] 触发任务: ${job.id} name="${job.name}" type=${job.schedule_type} missed=${(missedMs / 1000 / 60).toFixed(1)}min`,
+            )
+
+            try {
+              result = await this.deps.executeJob(job.id, job.name, job.instruction, job.agent_id ?? 'main')
+            } catch (err: unknown) {
+              result = {
+                success: false,
+                output: '',
+                error: err instanceof Error ? err.message : String(err),
+                duration_ms: Date.now() - startTime,
+              }
+              this.deps.log('ERROR', `[CronScheduler] 任务执行失败: ${job.id}`, err)
             }
-            this.deps.log('ERROR', `[CronScheduler] 任务执行失败: ${job.id}`, err)
-          }
 
-          // 更新 run_count 和 lastRunAt
-          const nowTs = Date.now()
-          job.run_count = (job.run_count ?? 0) + 1
-          job.lastRunAt = nowTs
-          job.last_result = {
-            success: result.success,
-            output: result.output,
-            error: result.error,
-            duration_ms: result.duration_ms,
+            // 更新执行计数和上次运行时间
+            const nowTs = Date.now()
+            job.run_count = (job.run_count ?? 0) + 1
+            job.lastRunAt = nowTs
+            job.last_result = {
+              success: result.success,
+              output: result.output,
+              error: result.error,
+              duration_ms: result.duration_ms,
+            }
+          } else {
+            // 错过超过 3 小时：跳过本次执行，只推进下次触发时间
+            this.deps.log(
+              'INFO',
+              `[CronScheduler] 错过超过3小时，跳过本次执行: ${job.id} name="${job.name}" type=${job.schedule_type} missed=${(missedMs / 1000 / 60).toFixed(1)}min`,
+            )
+            // 更新 lastRunAt 为当前时间，防止下次重启时从旧锚点计算导致永远跳过
+            // （nextRunAt 已被正确写入磁盘，此更新作为双重保险）
+            job.lastRunAt = now
           }
 
           // ── 计算新的下次触发时间 ─────────────────────────────────────────
+          // 注意：无论是否执行，都要推进 nextRunAt，防止重复判断同一过期时间点
+          const anchorTs = shouldExecute ? Date.now() : now
+
           if (job.schedule_type === 'cron') {
             const fields = parseCronExpression(job.schedule)
             if (fields) {
-              const nextRun = computeNextCronRun(fields, new Date(nowTs))
+              const nextRun = computeNextCronRun(fields, new Date(anchorTs))
               if (nextRun) {
                 job.nextRunAt = nextRun.getTime()
                 this.nextFireAt.set(job.id, nextRun.getTime())
@@ -220,14 +249,14 @@ export class SidecarCronScheduler {
               this.nextFireAt.delete(job.id)
             }
           } else if (job.schedule_type === 'at') {
-            // at 为一次性任务，触发后自动禁用
+            // at 为一次性任务，无论是否执行都自动禁用（过期不补即视为完成）
             job.enabled = false
             job.nextRunAt = undefined
             this.nextFireAt.delete(job.id)
           } else if (job.schedule_type === 'every') {
             const intervalMs = parseEveryIntervalMs(job.schedule)
             if (intervalMs) {
-              job.nextRunAt = nowTs + intervalMs
+              job.nextRunAt = anchorTs + intervalMs
               this.nextFireAt.set(job.id, job.nextRunAt)
             } else {
               job.nextRunAt = undefined
@@ -235,14 +264,19 @@ export class SidecarCronScheduler {
             }
           }
 
-          // 写回更新后的任务列表（只更新本次触发的任务字段）
+          // 写回更新后的任务列表
           try {
             const latestJobs = await this.deps.readJobs()
             const idx = latestJobs.findIndex(j => j.id === job.id)
             if (idx !== -1) {
-              latestJobs[idx].run_count = job.run_count
-              latestJobs[idx].lastRunAt = job.lastRunAt
-              latestJobs[idx].last_result = job.last_result
+              if (shouldExecute) {
+                latestJobs[idx].run_count = job.run_count
+                latestJobs[idx].last_result = job.last_result
+              }
+              // lastRunAt 在执行或跳过时都需要更新（防止锚点漂移）
+              if (job.lastRunAt !== undefined) {
+                latestJobs[idx].lastRunAt = job.lastRunAt
+              }
               latestJobs[idx].enabled = job.enabled
               if (job.nextRunAt !== undefined) {
                 latestJobs[idx].nextRunAt = job.nextRunAt
@@ -255,21 +289,23 @@ export class SidecarCronScheduler {
             this.deps.log('ERROR', `[CronScheduler] 写回任务状态失败: ${job.id}`, err)
           }
 
-          // 通知前端任务已完成（格式与 cronHandler.executeJobAsync 对齐）
-          try {
-            await this.deps.sendNotification('$/cron', {
-              type: 'job_complete',
-              jobId: job.id,
-              jobName: job.name,
-              agentId: job.agent_id ?? 'main',
-              success: result.success,
-              output: result.output,
-              error: result.error,
-              duration_ms: result.duration_ms,
-              timestamp: startTime,
-            })
-          } catch (err: unknown) {
-            this.deps.log('WARN', `[CronScheduler] 发送通知失败: ${job.id}`, err)
+          // 只有真正执行了才通知前端
+          if (shouldExecute && result) {
+            try {
+              await this.deps.sendNotification('$/cron', {
+                type: 'job_complete',
+                jobId: job.id,
+                jobName: job.name,
+                agentId: job.agent_id ?? 'main',
+                success: result.success,
+                output: result.output,
+                error: result.error,
+                duration_ms: result.duration_ms,
+                timestamp: startTime,
+              })
+            } catch (err: unknown) {
+              this.deps.log('WARN', `[CronScheduler] 发送通知失败: ${job.id}`, err)
+            }
           }
         }
       }
