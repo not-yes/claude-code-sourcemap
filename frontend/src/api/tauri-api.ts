@@ -1443,3 +1443,10 @@ export async function getAsrApiKey(): Promise<string | null> {
 export async function deleteAsrApiKey(): Promise<void> {
   return safeInvoke("delete_asr_api_key");
 }
+
+/**
+ * 打开轻量级预览窗口加载指定 URL
+ */
+export async function openPreviewWindow(url: string): Promise<void> {
+  return safeInvoke("open_preview_window", { url });
+}

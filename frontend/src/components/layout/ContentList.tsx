@@ -392,6 +392,7 @@ export function ContentList() {
     { id: "env", label: "环境变量" },
     { id: "advanced", label: "高级设置" },
     { id: "sync-config", label: "配置同步" },
+    { id: "voice", label: "语音识别" },
   ];
 
   const filteredAgents = search

@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { Copy, Check, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { open } from "@tauri-apps/plugin-shell";
+import { openPreviewWindow } from "@/api/tauri-api";
 
 interface MarkdownContentProps {
   content: string;
@@ -112,27 +113,50 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
           ),
           a: ({ href, children, ...props }) => {
             const isExternal = href?.startsWith("http://") || href?.startsWith("https://");
-            const handleClick = async (e: React.MouseEvent) => {
+            const handleLinkClick = async (e: React.MouseEvent) => {
               if (isExternal) {
                 e.preventDefault();
                 try {
-                  await open(href);
+                  await openPreviewWindow(href);
                 } catch {
-                  // 降级：如果 shell open 失败，允许默认行为
-                  window.open(href, "_blank");
+                  // 降级：预览窗口创建失败时，回退到系统浏览器
+                  try {
+                    await open(href);
+                  } catch {
+                    window.open(href, "_blank");
+                  }
                 }
+              }
+            };
+            const handleBrowserClick = async (e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              try {
+                await open(href);
+              } catch {
+                window.open(href, "_blank");
               }
             };
             return (
               <a
                 href={href}
-                target={isExternal ? "_blank" : undefined}
-                rel={isExternal ? "noopener noreferrer" : undefined}
-                onClick={handleClick}
+                className={cn(
+                  "inline-flex items-center gap-0.5",
+                  isExternal && "cursor-pointer"
+                )}
+                onClick={handleLinkClick}
                 {...props}
               >
                 {children}
-                {isExternal && <ExternalLink size={12} className="opacity-50 ml-0.5" />}
+                {isExternal && (
+                  <span
+                    className="inline-flex items-center justify-center ml-0.5 p-0.5 rounded hover:bg-primary/10 cursor-pointer"
+                    title="在浏览器打开"
+                    onClick={handleBrowserClick}
+                  >
+                    <ExternalLink size={12} className="opacity-50 hover:opacity-100" />
+                  </span>
+                )}
               </a>
             );
           },

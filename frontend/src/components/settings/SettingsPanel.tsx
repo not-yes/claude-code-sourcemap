@@ -282,6 +282,7 @@ export function SettingsPanel() {
   const saveAsrApiKey = async () => {
     if (!asrApiKeyInput.trim()) return;
     setAsrApiKeySaving(true);
+    setSaveError(null);
     try {
       await storeAsrApiKey(asrApiKeyInput.trim());
       const k = asrApiKeyInput.trim();
@@ -293,6 +294,7 @@ export function SettingsPanel() {
       setTimeout(() => setAsrApiKeySaved(false), 2000);
     } catch (e) {
       console.error("保存语音 API Key 失败", e);
+      setSaveError(`保存失败: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setAsrApiKeySaving(false);
     }
@@ -496,7 +498,7 @@ export function SettingsPanel() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                API Key 加密存储在系统密钥库（macOS Keychain / Windows Credential Manager / Linux libsecret），用于 LLM 对话和语音识别。
+                API Key 加密存储在系统密钥库（macOS Keychain / Windows Credential Manager / Linux libsecret），用于 LLM 对话。
               </p>
             </div>
           </div>
@@ -1184,23 +1186,39 @@ export function SettingsPanel() {
           )}
           <div className="space-y-2">
             <label className="text-sm font-medium">API Key</label>
-            <Input
-              type="password"
-              value={asrApiKeyInput}
-              onChange={(e) => setAsrApiKeyInput(e.target.value)}
-              placeholder="输入阿里云 DashScope API Key"
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={saveAsrApiKey} disabled={!asrApiKeyInput.trim()}>
-              保存
-            </Button>
-            {asrApiKeyMask && (
-              <Button variant="outline" onClick={handleDeleteAsrApiKey}>
-                删除
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  type={asrApiKeyVisible ? "text" : "password"}
+                  value={asrApiKeyInput}
+                  onChange={(e) => setAsrApiKeyInput(e.target.value)}
+                  placeholder="输入阿里云 DashScope API Key"
+                  className="pr-10 font-mono"
+                />
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setAsrApiKeyVisible(!asrApiKeyVisible)}
+                  tabIndex={-1}
+                >
+                  {asrApiKeyVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => void saveAsrApiKey()}
+                disabled={asrApiKeySaving || !asrApiKeyInput.trim()}
+                className="shrink-0"
+              >
+                {asrApiKeySaved ? "已保存 ✓" : asrApiKeySaving ? "保存中..." : "保存"}
               </Button>
-            )}
+            </div>
           </div>
+          {asrApiKeyMask && (
+            <Button variant="outline" onClick={handleDeleteAsrApiKey}>
+              删除
+            </Button>
+          )}
           {saveError && (
             <p className="text-xs text-destructive">{saveError}</p>
           )}

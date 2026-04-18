@@ -6,7 +6,7 @@ mod secure_storage;
 use agent::AgentManager;
 use plugins::mac_rounded_corners;
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::{command, Emitter, Manager, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
 /// Tauri 状态包装器，使 AgentManager 可跨命令共享
@@ -34,6 +34,28 @@ fn is_active_method(method: &str) -> bool {
 }
 
 /// 从 options 中提取 agent_id，默认 "main"
+/// 打开一个轻量级预览窗口加载指定 URL，用于消息中的链接预览。
+/// 如果同 label 窗口已存在，先关闭旧窗口再创建。
+#[command]
+async fn open_preview_window(app_handle: tauri::AppHandle, url: String) -> Result<(), String> {
+    if let Some(existing) = app_handle.get_webview_window("preview") {
+        let _ = existing.close();
+    }
+
+    let parsed_url = url.parse().map_err(|e| format!("无效URL: {}", e))?;
+
+    WebviewWindowBuilder::new(&app_handle, "preview", tauri::WebviewUrl::External(parsed_url))
+        .title("网页预览")
+        .inner_size(900.0, 640.0)
+        .min_inner_size(400.0, 300.0)
+        .center()
+        .decorations(true)
+        .build()
+        .map_err(|e| format!("创建预览窗口失败: {}", e))?;
+
+    Ok(())
+}
+
 fn extract_agent_id(options: &Option<serde_json::Value>) -> String {
     options
         .as_ref()
@@ -605,6 +627,8 @@ pub fn run() {
       secure_storage::store_sync_config,
       // 语音转写
       transcribe_audio,
+      // 链接预览窗口
+      open_preview_window,
     ])
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
