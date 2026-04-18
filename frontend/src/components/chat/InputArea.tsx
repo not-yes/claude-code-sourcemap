@@ -5,7 +5,7 @@ import {
   PopoverContent,
   PopoverAnchor,
 } from "@/components/ui/popover";
-import { Send, Square, Mic } from "lucide-react";
+import { Send, Square, Mic, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
 import { useAppStore } from "@/stores/appStore";
@@ -17,7 +17,9 @@ interface InputAreaProps {
   disabled?: boolean;
   loading?: boolean;
   onStop?: () => void;
-  queuedCount?: number;
+  queueItems?: string[];
+  onEditQueueItem?: (index: number, newContent: string) => void;
+  onDeleteQueueItem?: (index: number) => void;
 }
 
 /** Parse slash-command state based on cursor position */
@@ -36,7 +38,9 @@ export function InputArea({
   disabled,
   loading = false,
   onStop,
-  queuedCount = 0,
+  queueItems = [],
+  onEditQueueItem,
+  onDeleteQueueItem,
 }: InputAreaProps) {
   const agentInputDrafts = useAppStore((s) => s.agentInputDrafts);
   const setAgentInputDraft = useAppStore((s) => s.setAgentInputDraft);
@@ -46,6 +50,7 @@ export function InputArea({
   const [pickerMode, setPickerMode] = useState<"slash" | null>(null);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [cursorPos, setCursorPos] = useState(0);
+  const [queuePanelOpen, setQueuePanelOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastEnterTimeRef = useRef<number>(0);
   const valueRef = useRef<string>(agentInputDrafts[agentId] ?? "");
@@ -282,6 +287,42 @@ export function InputArea({
 
   return (
     <div className="px-4 py-4">
+      {/* 队列面板 */}
+      {queuePanelOpen && queueItems.length > 0 && (
+        <div className="mb-2 space-y-1.5 rounded-xl border border-border/60 bg-card/50 p-2.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-medium text-muted-foreground">
+              待发送队列 ({queueItems.length})
+            </span>
+            <button
+              type="button"
+              onClick={() => setQueuePanelOpen(false)}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              收起
+            </button>
+          </div>
+          {queueItems.map((item, i) => (
+            <div key={i} className="flex items-start gap-1.5 rounded-lg bg-muted/30 p-1.5">
+              <span className="mt-1 text-[10px] tabular-nums text-muted-foreground">{i + 1}.</span>
+              <textarea
+                value={item}
+                onChange={(e) => onEditQueueItem?.(i, e.target.value)}
+                className="min-h-[2rem] flex-1 resize-none rounded border-0 bg-transparent px-1 py-0.5 text-xs text-foreground shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
+                rows={1}
+              />
+              <button
+                type="button"
+                onClick={() => onDeleteQueueItem?.(i)}
+                title="删除"
+                className="mt-0.5 shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
         <PopoverAnchor asChild>
           <div
@@ -317,6 +358,7 @@ export function InputArea({
               <button
                 type="button"
                 disabled={isProcessingVoice}
+                onClick={handleVoiceInput}
                 title={isRecording ? "停止录音" : "处理中..."}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors"
               >
@@ -359,10 +401,18 @@ export function InputArea({
                 )}
               >
                 <Send className="h-4 w-4" />
-                {queuedCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white">
-                    {queuedCount}
-                  </span>
+                {queueItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setQueuePanelOpen(v => !v);
+                    }}
+                    className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white hover:bg-destructive/80"
+                    title="查看队列"
+                  >
+                    {queueItems.length}
+                  </button>
                 )}
               </button>
             )}

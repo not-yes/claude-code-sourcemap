@@ -190,8 +190,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [compacting, setCompacting] = useState(false);
   const [contextPercent, setContextPercent] = useState<number | undefined>(undefined);
-  const pendingQueueRef = useRef<string[]>([]);
-  const [queuedCount, setQueuedCount] = useState(0);
+  const [pendingQueue, setPendingQueue] = useState<string[]>([]);
   
   // Refs
   const inFlightRef = useRef(false);
@@ -549,9 +548,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
 
   const handleSend = useCallback(async (content: string) => {
     if (inFlightRef.current) {
-      pendingQueueRef.current.push(content);
-      setQueuedCount(pendingQueueRef.current.length);
-      toast.info(`已加入队列（${pendingQueueRef.current.length} 条待发送）`);
+      setPendingQueue(prev => [...prev, content]);
+      toast.info(`已加入队列（${pendingQueue.length + 1} 条待发送）`);
       return;
     }
     if (agentStartLoading[agentId]) {
@@ -896,17 +894,23 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const handleSendRef = useRef(handleSend);
   handleSendRef.current = handleSend;
   useEffect(() => {
-    if (!loading && pendingQueueRef.current.length > 0) {
-      const nextContent = pendingQueueRef.current.shift();
-      setQueuedCount(pendingQueueRef.current.length);
-      if (nextContent) {
-        const timer = setTimeout(() => {
-          handleSendRef.current(nextContent);
-        }, 100);
-        return () => clearTimeout(timer);
-      }
+    if (!loading && pendingQueue.length > 0) {
+      const nextContent = pendingQueue[0];
+      setPendingQueue(prev => prev.slice(1));
+      const timer = setTimeout(() => {
+        handleSendRef.current(nextContent);
+      }, 100);
+      return () => clearTimeout(timer);
     }
-  }, [loading]);
+  }, [loading, pendingQueue]);
+
+  const handleEditQueueItem = useCallback((index: number, newContent: string) => {
+    setPendingQueue(prev => prev.map((item, i) => (i === index ? newContent : item)));
+  }, []);
+
+  const handleDeleteQueueItem = useCallback((index: number) => {
+    setPendingQueue(prev => prev.filter((_, i) => i !== index));
+  }, []);
 
   const handleRetry = useCallback((userContent: string) => {
     setMessages((prev) => {
@@ -1128,7 +1132,16 @@ export function ChatArea({ agentId }: ChatAreaProps) {
           </span>
         </div>
       )}
-      <InputArea agentId={agentId} onSend={handleSend} disabled={agentStartLoading[agentId] || false} loading={loading} onStop={handleStop} queuedCount={queuedCount} />
+      <InputArea
+        agentId={agentId}
+        onSend={handleSend}
+        disabled={agentStartLoading[agentId] || false}
+        loading={loading}
+        onStop={handleStop}
+        queueItems={pendingQueue}
+        onEditQueueItem={handleEditQueueItem}
+        onDeleteQueueItem={handleDeleteQueueItem}
+      />
 
       {pendingRequest?.tool === "AskUserQuestion" ? (
         <AskUserQuestionDialog request={pendingRequest} onDecision={handlePermissionDecision} />
