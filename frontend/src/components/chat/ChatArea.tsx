@@ -891,18 +891,20 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   }, [agentId, activeBackendSessionId, agentStartLoading]);
 
   // 任务完成后自动消费队列中的待发送消息
+  const pendingQueueRef = useRef(pendingQueue);
+  pendingQueueRef.current = pendingQueue;
   const handleSendRef = useRef(handleSend);
   handleSendRef.current = handleSend;
   useEffect(() => {
-    if (!loading && pendingQueue.length > 0) {
-      const nextContent = pendingQueue[0];
+    if (!loading && pendingQueueRef.current.length > 0) {
+      const nextContent = pendingQueueRef.current[0];
       setPendingQueue(prev => prev.slice(1));
       const timer = setTimeout(() => {
         handleSendRef.current(nextContent);
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [loading, pendingQueue]);
+  }, [loading]);
 
   const handleDeleteQueueItem = useCallback((index: number) => {
     setPendingQueue(prev => prev.filter((_, i) => i !== index));

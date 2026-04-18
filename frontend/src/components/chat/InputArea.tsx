@@ -388,43 +388,45 @@ export function InputArea({
               </button>
             )}
             {/* 单个按钮：根据输入状态自动切换发送/停止 */}
-            {loading && value.trim().length === 0 && onStop ? (
-              <button
-                type="button"
-                onClick={onStop}
-                title="停止生成"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground hover:bg-destructive transition-colors"
-              >
-                <Square className="h-4 w-4" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={!canSend}
-                className={cn(
-                  "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200",
-                  canSend
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-110 hover:shadow-lg hover:shadow-primary/25 active:scale-95"
-                    : "bg-muted/50 text-muted-foreground cursor-not-allowed"
-                )}
-              >
-                <Send className="h-4 w-4" />
-                {queueItems.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setQueuePanelOpen(v => !v);
-                    }}
-                    className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white hover:bg-destructive/80"
-                    title="查看队列"
-                  >
-                    {queueItems.length}
-                  </button>
-                )}
-              </button>
-            )}
+            <div className="relative">
+              {loading && value.trim().length === 0 && onStop ? (
+                <button
+                  type="button"
+                  onClick={onStop}
+                  title="停止生成"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground hover:bg-destructive transition-colors"
+                >
+                  <Square className="h-4 w-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!canSend}
+                  className={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200",
+                    canSend
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-110 hover:shadow-lg hover:shadow-primary/25 active:scale-95"
+                      : "bg-muted/50 text-muted-foreground cursor-not-allowed"
+                  )}
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              )}
+              {queueItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setQueuePanelOpen(v => !v);
+                  }}
+                  className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white hover:bg-destructive/80 z-10"
+                  title="查看队列"
+                >
+                  {queueItems.length}
+                </button>
+              )}
+            </div>
             {/* 语音输入状态提示 */}
             {voiceError && (
               <div className="mt-2 flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
