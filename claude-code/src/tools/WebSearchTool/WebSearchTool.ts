@@ -455,9 +455,13 @@ export const WebSearchTool = buildTool({
         // Text summary
         formattedOutput += result + '\n\n'
       } else {
-        // Search result with links
+        // Search result with links - format as markdown so the model can directly mirror it
         if (result.content?.length > 0) {
-          formattedOutput += `Links: ${jsonStringify(result.content)}\n\n`
+          formattedOutput += 'Sources:\n'
+          result.content.forEach((hit, i) => {
+            formattedOutput += `${i + 1}. [${hit.title}](${hit.url})\n`
+          })
+          formattedOutput += '\n'
         } else {
           formattedOutput += 'No links found.\n\n'
         }

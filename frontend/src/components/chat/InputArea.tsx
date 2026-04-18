@@ -9,7 +9,7 @@ import { Send, Square, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
 import { useAppStore } from "@/stores/appStore";
-import { transcribeAudio } from "@/api/tauri-api";
+import { transcribeAudio, startAudioRecording, stopAudioRecording } from "@/api/tauri-api";
 
 interface InputAreaProps {
   agentId: string;
@@ -52,8 +52,6 @@ export function InputArea({
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingVoice, setIsProcessingVoice] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
 
   const slashState = parseSlash(value, cursorPos);
 
@@ -78,15 +76,6 @@ export function InputArea({
       lastSlashQueryRef.current = null;
     }
   }, [slashState, filteredSlashCommands.length, pickerMode]);
-
-  // 组件卸载时清理 MediaRecorder 和音频流
-  useEffect(() => {
-    return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-    };
-  }, []);
 
   const insertSlash = useCallback(
     (cmdName: string, startIndex: number) => {
@@ -223,85 +212,57 @@ export function InputArea({
     adjustHeight();
   }, [value, adjustHeight]);
 
-  // 语音输入：开始/停止录制
+  // 语音输入：开始/停止录制（使用 Rust 后端录音）
   const handleVoiceInput = useCallback(async () => {
-    // 检查浏览器是否支持 mediaDevices
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-      console.error("[InputArea] 麦克风不可用: navigator.mediaDevices.getUserMedia is undefined");
-      setVoiceError("桌面应用暂不支持语音输入，请使用浏览器版本访问");
-      return;
-    }
+    console.log("[InputArea] handleVoiceInput called, isRecording=", isRecording);
 
     // 如果正在录音，则停止并转写
-    if (isRecording && mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      setIsProcessingVoice(true);
+    if (isRecording) {
+      console.log("[InputArea] Stopping recording...");
+      try {
+        setIsProcessingVoice(true);
+        console.log("[InputArea] Calling stopAudioRecording()...");
+        const base64Audio = await stopAudioRecording();
+        console.log("[InputArea] stopAudioRecording returned, length=", base64Audio?.length);
+        setIsRecording(false);
+
+        // 将 Base64 WAV 数据转为 data URL 并转写
+        const dataUrl = `data:audio/wav;base64,${base64Audio}`;
+        console.log("[InputArea] Calling transcribeAudio()...");
+        const text = await transcribeAudio(dataUrl);
+        console.log("[InputArea] transcribeAudio returned:", text);
+
+        if (text && text.trim()) {
+          const currentValue = valueRef.current || "";
+          const newValue = currentValue + (currentValue ? " " : "") + text.trim();
+          console.log("[InputArea] Setting value:", newValue);
+          setValue(newValue);
+          valueRef.current = newValue;
+          setAgentInputDraft(agentId, newValue);
+          textareaRef.current?.focus();
+        } else {
+          console.warn("[InputArea] transcribeAudio returned empty text");
+          setVoiceError("未识别到语音内容，请重试");
+        }
+      } catch (err) {
+        console.error("[InputArea] 语音转写失败:", err);
+        setVoiceError(`语音转写失败: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setIsProcessingVoice(false);
+      }
       return;
     }
 
     // 开始录音
+    console.log("[InputArea] Starting recording...");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // 兼容 Safari 等不支持 audio/webm 的浏览器
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : MediaRecorder.isTypeSupported('audio/mp4')
-            ? 'audio/mp4'
-            : 'audio/ogg';
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
-      const detectedMimeType = mimeType; // 保存实际使用的 mimeType 用于 Blob
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        // 停止所有音轨
-        stream.getTracks().forEach((track) => track.stop());
-
-        // 合并音频数据
-        const audioBlob = new Blob(audioChunksRef.current, { type: detectedMimeType });
-
-        // 转为 base64
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const dataUrl = reader.result as string;
-
-          try {
-            const text = await transcribeAudio(dataUrl);
-            if (text && text.trim()) {
-              // 将转写文本追加到输入框
-              const currentValue = valueRef.current || "";
-              const newValue = currentValue + (currentValue ? " " : "") + text.trim();
-              setValue(newValue);
-              valueRef.current = newValue;
-              setAgentInputDraft(agentId, newValue);
-              // 聚焦输入框
-              textareaRef.current?.focus();
-            }
-          } catch (err) {
-            console.error("[InputArea] 语音转写失败:", err);
-            setVoiceError(`语音转写失败: ${err instanceof Error ? err.message : String(err)}`);
-            setIsProcessingVoice(false);
-          } finally {
-            setIsProcessingVoice(false);
-          }
-        };
-      };
-
-      mediaRecorder.start();
+      await startAudioRecording();
+      console.log("[InputArea] startAudioRecording succeeded");
       setIsRecording(true);
+      setVoiceError(null);
     } catch (err) {
-      console.error("[InputArea] 无法访问麦克风:", err);
-      setVoiceError(`无法访问麦克风: ${err instanceof Error ? err.message : String(err)}`);
+      console.error("[InputArea] 开始录音失败:", err);
+      setVoiceError(`开始录音失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   }, [isRecording, agentId, setAgentInputDraft]);
 

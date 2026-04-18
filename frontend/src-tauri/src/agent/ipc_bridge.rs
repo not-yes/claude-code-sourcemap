@@ -433,8 +433,8 @@ impl IpcBridge {
                             .unwrap_or(serde_json::Value::Null);
                         // 调试日志：记录收到的流式事件类型和内容摘要
                         let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
-                        let content_preview = if event_type == "error" {
-                            // 对于错误类型，显示完整的 event JSON
+                        let content_preview = if event_type == "error" || event_type == "status" {
+                            // 对于错误和状态类型，显示完整的 event JSON
                             serde_json::to_string(&event).unwrap_or_default()
                         } else {
                             event.get("content").and_then(|c| c.as_str()).map(|s| if s.len() > 50 { format!("{}...", safe_truncate(s, 50)) } else { s.to_string() }).unwrap_or_default()

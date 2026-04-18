@@ -40,6 +40,7 @@ import { useLogStore } from "@/stores/logStore";
 import { useUnreadStore } from "@/stores/unreadStore";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { CompactingIndicator } from "./CompactingIndicator";
+import { StreamingStatus } from "./StreamingStatus";
 import {
   Lightbulb,
   FileText,
@@ -75,6 +76,28 @@ function sessionMessageToMessage(m: SessionMessage, index: number): Message {
     usage: m.usage,
     createdAt: m.created_at ? new Date(m.created_at) : new Date(),
   };
+}
+
+/**
+ * 估算文本的 token 数量
+ * 考虑中英文差异：
+ * - 英文：约 4 字符 ≈ 1 token
+ * - 中文：约 1.5 字符 ≈ 1 token
+ * - 混合内容：加权平均
+ */
+function estimateTokenCount(text: string): number {
+  if (!text) return 0;
+  // 匹配中文字符（Unicode 范围 \u4e00-\u9fa5 是 CJK 基本块）
+  const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const totalChars = text.length;
+  const nonChineseChars = totalChars - chineseChars;
+
+  // 中文 token 估算：约 1.5 字符/token
+  const chineseTokens = chineseChars / 1.5;
+  // 英文 token 估算：约 4 字符/token
+  const englishTokens = nonChineseChars / 4;
+
+  return Math.round(chineseTokens + englishTokens);
 }
 
 const SUGGESTED_PROMPTS = [
@@ -620,7 +643,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                   console.log(`[ChatArea] text event: isThinking=${textEvent.isThinking}, content_len=${textEvent.content?.length || 0}`);
                   if (!responseTruncatedRef.current) {
                     responseSizeRef.current += textEvent.content.length;
-                    streamMetaRef.current.tokenEstimate += Math.round(textEvent.content.length / 4);
+                    streamMetaRef.current.tokenEstimate += estimateTokenCount(textEvent.content);
                     streamMetaRef.current.isThinking = !!textEvent.isThinking;
                     if (responseSizeRef.current > MAX_RESPONSE_SIZE) {
                       responseTruncatedRef.current = true;
@@ -731,6 +754,14 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                   if (!hasTextBlock) {
                     console.warn('[ChatArea] 执行完成但没有文本回复，reason:', completeEvent.reason);
                     blocks.push({ type: 'system', level: 'info', content: `任务执行完成（${completeEvent.reason || '无回复'}）` });
+                  }
+                  break;
+                }
+                case 'status': {
+                  const statusEvent = event as { type: 'status'; content: string; meta?: { tokens?: number; elapsed?: number; isThinking?: boolean } };
+                  console.log(`[ChatArea] status event:`, JSON.stringify(statusEvent));
+                  if (statusEvent.content && blocks.length < MAX_CONTENT_BLOCKS) {
+                    blocks.push({ type: 'status', content: statusEvent.content, meta: statusEvent.meta });
                   }
                   break;
                 }
@@ -1057,6 +1088,14 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       {messages.length > 0 && (
         <div className="flex justify-center py-2 -mt-2">
           <CompactingIndicator contextPercent={contextPercent} compacting={compacting} />
+        </div>
+      )}
+      {loading && messages.length > 0 && (
+        <div className="flex justify-center -mt-1 mb-1">
+          <StreamingStatus
+            startTime={streamMetaRef.current.startTime}
+            tokenEstimate={streamMetaRef.current.tokenEstimate}
+          />
         </div>
       )}
       {pendingRequest?.tool === "ExitPlanMode" && (

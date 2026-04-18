@@ -1179,9 +1179,14 @@ export function SettingsPanel() {
             配置语音输入功能使用的阿里云 DashScope API Key，与 LLM API Key 独立分开。
           </p>
           {asrApiKeyMask && (
-            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
-              <span className="text-muted-foreground">当前已配置：</span>
-              <span className="font-mono ml-1">{asrApiKeyMask}</span>
+            <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
+              <div>
+                <span className="text-muted-foreground">当前已配置：</span>
+                <span className="font-mono ml-1">{asrApiKeyMask}</span>
+              </div>
+              <Button variant="ghost" size="sm" onClick={handleDeleteAsrApiKey} className="text-destructive hover:text-destructive h-auto py-1 px-2">
+                删除
+              </Button>
             </div>
           )}
           <div className="space-y-2">
@@ -1214,11 +1219,6 @@ export function SettingsPanel() {
               </Button>
             </div>
           </div>
-          {asrApiKeyMask && (
-            <Button variant="outline" onClick={handleDeleteAsrApiKey}>
-              删除
-            </Button>
-          )}
           {saveError && (
             <p className="text-xs text-destructive">{saveError}</p>
           )}

@@ -136,6 +136,15 @@ function SystemBlock({ block }: { block: Extract<MessageContentBlock, { type: 's
   );
 }
 
+function StatusBlock({ block }: { block: Extract<MessageContentBlock, { type: 'status' }> }) {
+  if (!block.content) return null;
+  return (
+    <div className="text-xs text-muted-foreground/70 italic px-1 py-0.5">
+      {block.content}
+    </div>
+  );
+}
+
 function UsageFooter({ usage }: { usage: TokenUsage }) {
   const allZero =
     (usage.inputTokens ?? 0) === 0 &&
@@ -176,6 +185,8 @@ function renderProcessBlock(block: MessageContentBlock, index: number) {
       return <ToolResultBlock key={index} block={block} />;
     case 'system':
       return <SystemBlock key={index} block={block} />;
+    case 'status':
+      return <StatusBlock key={index} block={block} />;
     default:
       return null;
   }

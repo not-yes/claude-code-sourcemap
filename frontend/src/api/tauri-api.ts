@@ -246,6 +246,8 @@ export type StreamEventPayload =
    * Emitted from Rust IPC bridge after $/complete notification.
    */
   | { type: "complete"; usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number }; reason?: string; sessionId?: string }
+  /** 状态更新事件（如 Roosting、thinking、token 统计等） */
+  | { type: "status"; content: string; meta?: { tokens?: number; elapsed?: number; isThinking?: boolean } }
   | { type: string; [key: string]: unknown };  // 底安：未知事件类型
 
 export type ExecuteStreamCallbacks = {
@@ -1362,7 +1364,7 @@ export async function disconnectMcpServer(name: string): Promise<{ success: bool
  * 通过 Rust 后端读取,避免前端直接操作文件系统
  */
 export async function getClaudeConfig(configName: "config" | "approvals"): Promise<string> {
-  return safeInvoke<string>("get_claude_config", { config_name: configName });
+  return safeInvoke<string>("get_claude_config", { configName });
 }
 
 /**
@@ -1374,7 +1376,7 @@ export async function saveClaudeConfig(
   content: string
 ): Promise<void> {
   await safeInvoke("save_claude_config", {
-    config_name: configName,
+    configName,
     content,
   });
 }
@@ -1418,7 +1420,7 @@ export async function listenCronComplete(
  * @returns 转写后的文本
  */
 export async function transcribeAudio(audioData: string): Promise<string> {
-  return safeInvoke<string>("transcribe_audio", { audio_data: audioData });
+  return safeInvoke<string>("transcribe_audio", { audioData });
 }
 
 // -------- 语音识别 API Key 管理 --------
@@ -1427,7 +1429,7 @@ export async function transcribeAudio(audioData: string): Promise<string> {
  * 存储语音识别 API Key
  */
 export async function storeAsrApiKey(apiKey: string): Promise<void> {
-  return safeInvoke("store_asr_api_key", { api_key: apiKey });
+  return safeInvoke("store_asr_api_key", { apiKey });
 }
 
 /**
@@ -1442,6 +1444,34 @@ export async function getAsrApiKey(): Promise<string | null> {
  */
 export async function deleteAsrApiKey(): Promise<void> {
   return safeInvoke("delete_asr_api_key");
+}
+
+/**
+ * 获取可用的音频输入设备列表
+ */
+export async function listAudioDevices(): Promise<string[]> {
+  return safeInvoke<string[]>("list_audio_devices");
+}
+
+/**
+ * 开始音频录制
+ */
+export async function startAudioRecording(): Promise<void> {
+  return safeInvoke("start_audio_recording");
+}
+
+/**
+ * 停止音频录制并返回 Base64 WAV 数据
+ */
+export async function stopAudioRecording(): Promise<string> {
+  return safeInvoke<string>("stop_audio_recording");
+}
+
+/**
+ * 检查是否正在录音
+ */
+export async function isAudioRecording(): Promise<boolean> {
+  return safeInvoke<boolean>("is_audio_recording");
 }
 
 /**

@@ -2,6 +2,7 @@ mod agent;
 mod plugins;
 mod sync;
 mod secure_storage;
+mod audio_capture;
 
 use agent::AgentManager;
 use plugins::mac_rounded_corners;
@@ -627,6 +628,11 @@ pub fn run() {
       secure_storage::store_sync_config,
       // 语音转写
       transcribe_audio,
+      // 音频录制
+      audio_capture::list_audio_devices,
+      audio_capture::start_audio_recording,
+      audio_capture::stop_audio_recording,
+      audio_capture::is_audio_recording,
       // 链接预览窗口
       open_preview_window,
     ])
