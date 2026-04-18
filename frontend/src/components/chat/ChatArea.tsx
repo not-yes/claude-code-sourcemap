@@ -904,10 +904,6 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     }
   }, [loading, pendingQueue]);
 
-  const handleEditQueueItem = useCallback((index: number, newContent: string) => {
-    setPendingQueue(prev => prev.map((item, i) => (i === index ? newContent : item)));
-  }, []);
-
   const handleDeleteQueueItem = useCallback((index: number) => {
     setPendingQueue(prev => prev.filter((_, i) => i !== index));
   }, []);
@@ -1139,7 +1135,6 @@ export function ChatArea({ agentId }: ChatAreaProps) {
         loading={loading}
         onStop={handleStop}
         queueItems={pendingQueue}
-        onEditQueueItem={handleEditQueueItem}
         onDeleteQueueItem={handleDeleteQueueItem}
       />
 

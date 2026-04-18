@@ -5,7 +5,7 @@ import {
   PopoverContent,
   PopoverAnchor,
 } from "@/components/ui/popover";
-import { Send, Square, Mic, Trash2 } from "lucide-react";
+import { Send, Square, Mic, Trash2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
 import { useAppStore } from "@/stores/appStore";
@@ -18,7 +18,6 @@ interface InputAreaProps {
   loading?: boolean;
   onStop?: () => void;
   queueItems?: string[];
-  onEditQueueItem?: (index: number, newContent: string) => void;
   onDeleteQueueItem?: (index: number) => void;
 }
 
@@ -39,7 +38,6 @@ export function InputArea({
   loading = false,
   onStop,
   queueItems = [],
-  onEditQueueItem,
   onDeleteQueueItem,
 }: InputAreaProps) {
   const agentInputDrafts = useAppStore((s) => s.agentInputDrafts);
@@ -305,12 +303,24 @@ export function InputArea({
           {queueItems.map((item, i) => (
             <div key={i} className="flex items-start gap-1.5 rounded-lg bg-muted/30 p-1.5">
               <span className="mt-1 text-[10px] tabular-nums text-muted-foreground">{i + 1}.</span>
-              <textarea
-                value={item}
-                onChange={(e) => onEditQueueItem?.(i, e.target.value)}
-                className="min-h-[2rem] flex-1 resize-none rounded border-0 bg-transparent px-1 py-0.5 text-xs text-foreground shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
-                rows={1}
-              />
+              <span className="min-h-[2rem] flex-1 rounded px-1 py-0.5 text-xs text-foreground">
+                {item}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setValue(item);
+                  valueRef.current = item;
+                  setAgentInputDraft(agentId, item);
+                  onDeleteQueueItem?.(i);
+                  setQueuePanelOpen(false);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+                title="移到输入框编辑"
+                className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
               <button
                 type="button"
                 onClick={() => onDeleteQueueItem?.(i)}
@@ -416,17 +426,23 @@ export function InputArea({
                 )}
               </button>
             )}
-            {/* 语音输入错误提示 */}
+            {/* 语音输入状态提示 */}
             {voiceError && (
-              <div className="mt-2 px-1 text-xs text-destructive flex items-center gap-1">
-                <span>{voiceError}</span>
+              <div className="mt-2 flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
+                <span className="text-destructive flex-1">{voiceError}</span>
                 <button
                   type="button"
                   onClick={() => setVoiceError(null)}
-                  className="ml-auto hover:underline"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  关闭
+                  ✕
                 </button>
+              </div>
+            )}
+            {isProcessingVoice && (
+              <div className="mt-2 flex items-center gap-2 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
+                <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
+                <span className="text-primary flex-1">正在转写...</span>
               </div>
             )}
           </div>
