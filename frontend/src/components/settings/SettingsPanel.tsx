@@ -23,13 +23,14 @@ import {
   Settings2,
   Variable,
   Bell,
+  Mic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toml from "toml";
 import * as TOML from "@iarna/toml";
 import { useAppStore } from "@/stores/appStore";
 import { invoke } from "@tauri-apps/api/core";
-import { getClaudeConfig, saveClaudeConfig } from "@/api/tauri-api";
+import { getClaudeConfig, saveClaudeConfig, storeAsrApiKey, getAsrApiKey, deleteAsrApiKey } from "@/api/tauri-api";
 import { ConfigSyncPanel } from "./ConfigSyncPanel";
 
 type SettingsCategory =
@@ -39,7 +40,8 @@ type SettingsCategory =
   | "notifications"
   | "env"
   | "advanced"
-  | "sync-config";
+  | "sync-config"
+  | "voice";
 
 function SectionHeader({
   icon: Icon,
@@ -133,6 +135,14 @@ export function SettingsPanel() {
   const [opusModelSaved, setOpusModelSaved] = useState(false);
   const [haikuModelSaved, setHaikuModelSaved] = useState(false);
 
+  // 语音识别 API Key 状态
+  const [asrApiKeyInput, setAsrApiKeyInput] = useState("");
+  const [asrApiKeyMask, setAsrApiKeyMask] = useState("");
+  const [asrApiKeyVisible, setAsrApiKeyVisible] = useState(false);
+  const [asrApiKeySaving, setAsrApiKeySaving] = useState(false);
+  const [asrApiKeySaved, setAsrApiKeySaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   // 通用场景模型保存函数
   const saveSceneModel = async (
     cmd: string,
@@ -215,6 +225,16 @@ export function SettingsPanel() {
         if (config.opus_model) setOpusModel(config.opus_model);
         if (config.haiku_model) setHaikuModel(config.haiku_model);
 
+        // 加载语音识别 API Key
+        const asrApiKey = await getAsrApiKey();
+        if (asrApiKey) {
+          const masked =
+            asrApiKey.length > 8
+              ? asrApiKey.slice(0, 3) + "..." + asrApiKey.slice(-4)
+              : "***";
+          setAsrApiKeyMask(masked);
+        }
+
         // 兼容旧配置：如果安全存储中没有，尝试从旧配置迁移
         if (!config.api_key) {
           const oldKey = await invoke<string | null>("get_config", { key: "api_key" });
@@ -256,6 +276,36 @@ export function SettingsPanel() {
       console.error("保存 API Key 失败", e);
     } finally {
       setApiKeySaving(false);
+    }
+  };
+
+  const saveAsrApiKey = async () => {
+    if (!asrApiKeyInput.trim()) return;
+    setAsrApiKeySaving(true);
+    try {
+      await storeAsrApiKey(asrApiKeyInput.trim());
+      const k = asrApiKeyInput.trim();
+      const masked =
+        k.length > 8 ? k.slice(0, 3) + "..." + k.slice(-4) : "***";
+      setAsrApiKeyMask(masked);
+      setAsrApiKeyInput("");
+      setAsrApiKeySaved(true);
+      setTimeout(() => setAsrApiKeySaved(false), 2000);
+    } catch (e) {
+      console.error("保存语音 API Key 失败", e);
+    } finally {
+      setAsrApiKeySaving(false);
+    }
+  };
+
+  const handleDeleteAsrApiKey = async () => {
+    try {
+      await deleteAsrApiKey();
+      setAsrApiKeyMask("");
+      setAsrApiKeyInput("");
+    } catch (e) {
+      console.error("删除语音 API Key 失败", e);
+      setSaveError("删除失败");
     }
   };
 
@@ -446,7 +496,7 @@ export function SettingsPanel() {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                API Key 加密存储在系统密钥库（macOS Keychain / Windows Credential Manager / Linux libsecret）。
+                API Key 加密存储在系统密钥库（macOS Keychain / Windows Credential Manager / Linux libsecret），用于 LLM 对话和语音识别。
               </p>
             </div>
           </div>
@@ -1119,7 +1169,45 @@ export function SettingsPanel() {
       )}
 
 
-      {/* ── 配置同步 ─────────────────────────────────────────────── */}
+      {/* ── 语音识别 ─────────────────────────────────────────────── */}
+      {selectedCategory === "voice" && (
+        <div className="border-b p-4 space-y-4">
+          <SectionHeader icon={Mic} title="语音识别" />
+          <p className="text-xs text-muted-foreground">
+            配置语音输入功能使用的阿里云 DashScope API Key，与 LLM API Key 独立分开。
+          </p>
+          {asrApiKeyMask && (
+            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">当前已配置：</span>
+              <span className="font-mono ml-1">{asrApiKeyMask}</span>
+            </div>
+          )}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">API Key</label>
+            <Input
+              type="password"
+              value={asrApiKeyInput}
+              onChange={(e) => setAsrApiKeyInput(e.target.value)}
+              placeholder="输入阿里云 DashScope API Key"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={saveAsrApiKey} disabled={!asrApiKeyInput.trim()}>
+              保存
+            </Button>
+            {asrApiKeyMask && (
+              <Button variant="outline" onClick={handleDeleteAsrApiKey}>
+                删除
+              </Button>
+            )}
+          </div>
+          {saveError && (
+            <p className="text-xs text-destructive">{saveError}</p>
+          )}
+        </div>
+      )}
+
+      {/* ── 配置同步──────────────────────────────────────────── */}
       {selectedCategory === "sync-config" && <ConfigSyncPanel />}
 
       {/* 解析失败提示 */}

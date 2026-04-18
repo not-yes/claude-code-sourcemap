@@ -1,8 +1,9 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useCallback, useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { open } from "@tauri-apps/plugin-shell";
 
 interface MarkdownContentProps {
   content: string;
@@ -77,7 +78,7 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
         "[&_h3]:text-[1em] [&_h3]:font-medium [&_h3]:mt-4 [&_h3]:mb-1.5",
         "[&_h4]:text-[0.95em] [&_h4]:font-medium [&_h4]:mt-3 [&_h4]:mb-1",
         // Links - subtle with primary color
-        "[&_a]:text-primary [&_a]:no-underline [&_a]:border-b [&_a]:border-primary/30 [&_a]:transition-all [&_a]:hover:border-primary/60 [&_a]:hover:text-primary",
+        "[&_a]:text-primary [&_a]:no-underline [&_a]:border-b [&_a]:border-primary/30 [&_a]:transition-all [&_a]:hover:border-primary/60 [&_a]:hover:text-primary [&_a]:inline-flex [&_a]:items-center [&_a]:gap-0.5",
         // Blockquote - editorial style
         "[&_blockquote]:border-l-[3px] [&_blockquote]:border-primary/50 [&_blockquote]:bg-primary/[0.03] [&_blockquote]:rounded-r-md [&_blockquote]:py-2.5 [&_blockquote]:px-4 [&_blockquote]:not-italic [&_blockquote]:text-muted-foreground [&_blockquote]:my-4",
         // Lists - cleaner
@@ -109,6 +110,32 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
           pre: ({ children, ...props }) => (
             <CodeBlock {...props}>{children}</CodeBlock>
           ),
+          a: ({ href, children, ...props }) => {
+            const isExternal = href?.startsWith("http://") || href?.startsWith("https://");
+            const handleClick = async (e: React.MouseEvent) => {
+              if (isExternal) {
+                e.preventDefault();
+                try {
+                  await open(href);
+                } catch {
+                  // 降级：如果 shell open 失败，允许默认行为
+                  window.open(href, "_blank");
+                }
+              }
+            };
+            return (
+              <a
+                href={href}
+                target={isExternal ? "_blank" : undefined}
+                rel={isExternal ? "noopener noreferrer" : undefined}
+                onClick={handleClick}
+                {...props}
+              >
+                {children}
+                {isExternal && <ExternalLink size={12} className="opacity-50 ml-0.5" />}
+              </a>
+            );
+          },
         }}
       >
         {content}

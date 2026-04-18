@@ -1409,3 +1409,37 @@ export async function listenCronComplete(
     callback(event.payload);
   });
 }
+
+// -------- 语音转写 API --------
+
+/**
+ * 使用阿里云 DashScope qwen3-asr-flash 模型将音频转为文字
+ * @param audioData - Data URL 格式的音频数据，格式为: data:<mediatype>;base64,<data>
+ * @returns 转写后的文本
+ */
+export async function transcribeAudio(audioData: string): Promise<string> {
+  return safeInvoke<string>("transcribe_audio", { audio_data: audioData });
+}
+
+// -------- 语音识别 API Key 管理 --------
+
+/**
+ * 存储语音识别 API Key
+ */
+export async function storeAsrApiKey(apiKey: string): Promise<void> {
+  return safeInvoke("store_asr_api_key", { api_key: apiKey });
+}
+
+/**
+ * 读取语音识别 API Key
+ */
+export async function getAsrApiKey(): Promise<string | null> {
+  return safeInvoke<string | null>("get_asr_api_key");
+}
+
+/**
+ * 删除语音识别 API Key
+ */
+export async function deleteAsrApiKey(): Promise<void> {
+  return safeInvoke("delete_asr_api_key");
+}

@@ -37,6 +37,8 @@ const KEY_OPUS_MODEL: &str = "llm_opus_model";                 // Opus 默认
 const KEY_HAIKU_MODEL: &str = "llm_haiku_model";               // Haiku 默认
 const KEY_GITHUB_TOKEN: &str = "github_sync_token";
 const KEY_SYNC_USERNAME: &str = "sync_username";
+// 语音识别 API Key
+const KEY_ASR_API_KEY: &str = "asr_api_key";                  // 语音识别专用 API Key
 
 /// 全局 keyring 实例
 static KEYRING: OnceLock<keyring::Entry> = OnceLock::new();
@@ -539,6 +541,34 @@ pub async fn get_sync_username() -> Result<Option<String>, String> {
 #[command]
 pub async fn delete_sync_username() -> Result<(), String> {
     secure_store_delete(KEY_SYNC_USERNAME.to_string()).await
+}
+
+// ============================================================================
+// 便捷方法：语音识别 API Key
+// ============================================================================
+
+/// 存储语音识别 API Key
+#[command]
+pub async fn store_asr_api_key(api_key: String) -> Result<(), String> {
+    log::info!("store_asr_api_key: 开始存储语音识别 API Key");
+    secure_store_set(KEY_ASR_API_KEY.to_string(), api_key).await
+}
+
+/// 读取语音识别 API Key
+#[command]
+pub async fn get_asr_api_key() -> Result<Option<String>, String> {
+    secure_store_get(KEY_ASR_API_KEY.to_string()).await
+}
+
+/// 删除语音识别 API Key
+#[command]
+pub async fn delete_asr_api_key() -> Result<(), String> {
+    secure_store_delete(KEY_ASR_API_KEY.to_string()).await
+}
+
+/// 同步读取语音识别 API Key（用于 Sidecar 启动）
+pub fn get_asr_api_key_sync() -> Result<Option<String>, String> {
+    get_cached_config_field(|c| &c.api_key)
 }
 
 /// 同步配置结构

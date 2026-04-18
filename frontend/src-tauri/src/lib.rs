@@ -413,6 +413,118 @@ async fn agent_get_running(
     Ok(state.0.get_running_agents().await)
 }
 
+/// 语音转写：使用阿里云 DashScope qwen3-asr-flash 模型将音频转为文字
+#[tauri::command]
+async fn transcribe_audio(
+    audio_data: String,
+) -> Result<String, String> {
+    log::info!("transcribe_audio: 开始转写, audio_data长度={}", audio_data.len());
+
+    // 从安全存储获取语音识别专用 API Key
+    let api_key = secure_storage::get_asr_api_key()
+        .await
+        .map_err(|e| format!("获取语音 API Key 失败: {}", e))?
+        .ok_or_else(|| "语音识别 API Key 未设置，请在「设置 - 语音识别」中配置".to_string())?;
+
+    // audio_data 应为 Data URL 格式: data:<mediatype>;base64,<data>
+    // 前端已经格式化为 data:audio/webm;base64,... 格式
+
+    // 构建 Chat Completions 格式请求（OpenAI 兼容风格）
+    let request_body = serde_json::json!({
+        "model": "qwen3-asr-flash",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_data
+                        }
+                    }
+                ]
+            }
+        ],
+        "stream": false,
+        "extra_body": {
+            "asr_options": {
+                "enable_itn": true  // 启用智能数字转换，123 -> 一百二十三
+            }
+        }
+    });
+
+    // 30 秒超时，防止永久卡死
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let response = client
+        .post("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| {
+            log::error!("transcribe_audio: HTTP 请求失败 - {}", e);
+            format!("网络请求失败，请检查网络连接: {}", e)
+        })?;
+
+    let status = response.status();
+    let body = response.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+
+    log::info!("transcribe_audio: 响应状态={}", status);
+
+    if !status.is_success() {
+        log::error!("transcribe_audio: API 返回错误状态 {} - {}", status, body);
+        // 尝试解析错误信息
+        #[derive(serde::Deserialize)]
+        struct ErrorResponse {
+            error: Option<ErrorDetail>,
+        }
+        #[derive(serde::Deserialize, Clone)]
+        struct ErrorDetail {
+            message: Option<String>,
+            code: Option<String>,
+        }
+        if let Ok(err_resp) = serde_json::from_str::<ErrorResponse>(&body) {
+            if let Some(err) = err_resp.error {
+                let msg = err.message.unwrap_or_default();
+                let code = err.code;
+                return Err(format!("转写失败: {} (code: {:?})", msg, code));
+            }
+        }
+        return Err(format!("转写失败 (HTTP {}): {}", status, body));
+    }
+
+    // 解析 Chat Completions 响应格式
+    #[derive(serde::Deserialize)]
+    struct Choice {
+        message: Message,
+    }
+    #[derive(serde::Deserialize)]
+    struct Message {
+        content: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ChatCompletionResponse {
+        choices: Vec<Choice>,
+    }
+
+    let result: ChatCompletionResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("解析响应失败: {} - body: {}", e, body))?;
+
+    let text = result.choices
+        .first()
+        .and_then(|c| c.message.content.clone())
+        .unwrap_or_default();
+
+    log::info!("transcribe_audio: 转写成功, 结果长度={}", text.len());
+
+    Ok(text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   // 创建全局 AgentManager 实例
@@ -484,9 +596,15 @@ pub fn run() {
       secure_storage::store_sync_username,
       secure_storage::get_sync_username,
       secure_storage::delete_sync_username,
+      // 语音识别 API Key
+      secure_storage::store_asr_api_key,
+      secure_storage::get_asr_api_key,
+      secure_storage::delete_asr_api_key,
       // 批量同步配置
       secure_storage::get_sync_config,
       secure_storage::store_sync_config,
+      // 语音转写
+      transcribe_audio,
     ])
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {

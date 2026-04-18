@@ -5,10 +5,11 @@ import {
   PopoverContent,
   PopoverAnchor,
 } from "@/components/ui/popover";
-import { Send, Square } from "lucide-react";
+import { Send, Square, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
 import { useAppStore } from "@/stores/appStore";
+import { transcribeAudio } from "@/api/tauri-api";
 
 interface InputAreaProps {
   agentId: string;
@@ -47,6 +48,12 @@ export function InputArea({
   const lastEnterTimeRef = useRef<number>(0);
   const valueRef = useRef<string>(agentInputDrafts[agentId] ?? "");
   const lastSlashQueryRef = useRef<string | null>(null);
+  // 语音录制状态
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const slashState = parseSlash(value, cursorPos);
 
@@ -71,6 +78,15 @@ export function InputArea({
       lastSlashQueryRef.current = null;
     }
   }, [slashState, filteredSlashCommands.length, pickerMode]);
+
+  // 组件卸载时清理 MediaRecorder 和音频流
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
 
   const insertSlash = useCallback(
     (cmdName: string, startIndex: number) => {
@@ -207,6 +223,81 @@ export function InputArea({
     adjustHeight();
   }, [value, adjustHeight]);
 
+  // 语音输入：开始/停止录制
+  const handleVoiceInput = useCallback(async () => {
+    // 如果正在录音，则停止并转写
+    if (isRecording && mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      setIsProcessingVoice(true);
+      return;
+    }
+
+    // 开始录音
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 兼容 Safari 等不支持 audio/webm 的浏览器
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : MediaRecorder.isTypeSupported('audio/mp4')
+            ? 'audio/mp4'
+            : 'audio/ogg';
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const detectedMimeType = mimeType; // 保存实际使用的 mimeType 用于 Blob
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        // 停止所有音轨
+        stream.getTracks().forEach((track) => track.stop());
+
+        // 合并音频数据
+        const audioBlob = new Blob(audioChunksRef.current, { type: detectedMimeType });
+
+        // 转为 base64
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const dataUrl = reader.result as string;
+
+          try {
+            const text = await transcribeAudio(dataUrl);
+            if (text && text.trim()) {
+              // 将转写文本追加到输入框
+              const currentValue = valueRef.current || "";
+              const newValue = currentValue + (currentValue ? " " : "") + text.trim();
+              setValue(newValue);
+              valueRef.current = newValue;
+              setAgentInputDraft(agentId, newValue);
+              // 聚焦输入框
+              textareaRef.current?.focus();
+            }
+          } catch (err) {
+            console.error("[InputArea] 语音转写失败:", err);
+            setVoiceError(`语音转写失败: ${err instanceof Error ? err.message : String(err)}`);
+            setIsProcessingVoice(false);
+          } finally {
+            setIsProcessingVoice(false);
+          }
+        };
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("[InputArea] 无法访问麦克风:", err);
+      setVoiceError(`无法访问麦克风: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [isRecording, agentId, setAgentInputDraft]);
+
   // Auto-scroll picker to keep the active item in view
   useEffect(() => {
     if (!pickerOpen) return;
@@ -252,6 +343,30 @@ export function InputArea({
               }}
               onKeyDown={handleKeyDown}
             />
+            {/* 语音输入按钮 */}
+            {(isRecording || isProcessingVoice) ? (
+              <button
+                type="button"
+                disabled={isProcessingVoice}
+                title={isRecording ? "停止录音" : "处理中..."}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors"
+              >
+                {isProcessingVoice ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : (
+                  <Square className="h-4 w-4" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleVoiceInput}
+                title="语音输入"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/50 text-muted-foreground hover:bg-primary/20 hover:text-primary transition-colors"
+              >
+                <Mic className="h-4 w-4" />
+              </button>
+            )}
             {showStop ? (
               <button
                 type="button"
@@ -275,6 +390,19 @@ export function InputArea({
               >
                 <Send className="h-4 w-4" />
               </button>
+            )}
+            {/* 语音输入错误提示 */}
+            {voiceError && (
+              <div className="mt-2 px-1 text-xs text-destructive flex items-center gap-1">
+                <span>{voiceError}</span>
+                <button
+                  type="button"
+                  onClick={() => setVoiceError(null)}
+                  className="ml-auto hover:underline"
+                >
+                  关闭
+                </button>
+              </div>
             )}
           </div>
         </PopoverAnchor>
