@@ -190,6 +190,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [compacting, setCompacting] = useState(false);
   const [contextPercent, setContextPercent] = useState<number | undefined>(undefined);
+  const pendingQueueRef = useRef<string[]>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
   
   // Refs
   const inFlightRef = useRef(false);
@@ -546,7 +548,12 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   }, [pendingRequest, setPendingRequest, addRememberedDecision, agentId]);
 
   const handleSend = useCallback(async (content: string) => {
-    if (inFlightRef.current) return;
+    if (inFlightRef.current) {
+      pendingQueueRef.current.push(content);
+      setQueuedCount(pendingQueueRef.current.length);
+      toast.info(`已加入队列（${pendingQueueRef.current.length} 条待发送）`);
+      return;
+    }
     if (agentStartLoading[agentId]) {
       toast.error("Agent 正在启动中，请稍后再试");
       return;
@@ -885,6 +892,22 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, activeBackendSessionId, agentStartLoading]);
 
+  // 任务完成后自动消费队列中的待发送消息
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
+  useEffect(() => {
+    if (!loading && pendingQueueRef.current.length > 0) {
+      const nextContent = pendingQueueRef.current.shift();
+      setQueuedCount(pendingQueueRef.current.length);
+      if (nextContent) {
+        const timer = setTimeout(() => {
+          handleSendRef.current(nextContent);
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [loading]);
+
   const handleRetry = useCallback((userContent: string) => {
     setMessages((prev) => {
       const next = [...prev];
@@ -1105,7 +1128,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
           </span>
         </div>
       )}
-      <InputArea agentId={agentId} onSend={handleSend} disabled={loading} loading={loading} onStop={handleStop} />
+      <InputArea agentId={agentId} onSend={handleSend} disabled={agentStartLoading[agentId] || false} loading={loading} onStop={handleStop} queuedCount={queuedCount} />
 
       {pendingRequest?.tool === "AskUserQuestion" ? (
         <AskUserQuestionDialog request={pendingRequest} onDecision={handlePermissionDecision} />

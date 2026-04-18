@@ -17,6 +17,7 @@ interface InputAreaProps {
   disabled?: boolean;
   loading?: boolean;
   onStop?: () => void;
+  queuedCount?: number;
 }
 
 /** Parse slash-command state based on cursor position */
@@ -35,6 +36,7 @@ export function InputArea({
   disabled,
   loading = false,
   onStop,
+  queuedCount = 0,
 }: InputAreaProps) {
   const agentInputDrafts = useAppStore((s) => s.agentInputDrafts);
   const setAgentInputDraft = useAppStore((s) => s.setAgentInputDraft);
@@ -198,7 +200,6 @@ export function InputArea({
 
   const canSend =
     value.trim().length > 0 && !sending && !disabled && !loading;
-  const showStop = loading && onStop;
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -335,7 +336,8 @@ export function InputArea({
                 <Mic className="h-4 w-4" />
               </button>
             )}
-            {showStop ? (
+            {/* 停止按钮：仅在任务执行中显示 */}
+            {loading && onStop && (
               <button
                 type="button"
                 onClick={onStop}
@@ -344,21 +346,26 @@ export function InputArea({
               >
                 <Square className="h-4 w-4" />
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSend}
-                disabled={!canSend}
-                className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200",
-                  canSend
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-110 hover:shadow-lg hover:shadow-primary/25 active:scale-95"
-                    : "bg-muted/50 text-muted-foreground cursor-not-allowed"
-                )}
-              >
-                <Send className="h-4 w-4" />
-              </button>
             )}
+            {/* 发送按钮：始终显示，执行中点击会入队 */}
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!canSend}
+              className={cn(
+                "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200",
+                canSend
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-110 hover:shadow-lg hover:shadow-primary/25 active:scale-95"
+                  : "bg-muted/50 text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              <Send className="h-4 w-4" />
+              {queuedCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white">
+                  {queuedCount}
+                </span>
+              )}
+            </button>
             {/* 语音输入错误提示 */}
             {voiceError && (
               <div className="mt-2 px-1 text-xs text-destructive flex items-center gap-1">
