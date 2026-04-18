@@ -336,8 +336,8 @@ export function InputArea({
                 <Mic className="h-4 w-4" />
               </button>
             )}
-            {/* 停止按钮：仅在任务执行中显示 */}
-            {loading && onStop && (
+            {/* 单个按钮：根据输入状态自动切换发送/停止 */}
+            {loading && !canSend && onStop ? (
               <button
                 type="button"
                 onClick={onStop}
@@ -346,26 +346,26 @@ export function InputArea({
               >
                 <Square className="h-4 w-4" />
               </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!canSend}
+                className={cn(
+                  "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200",
+                  canSend
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-110 hover:shadow-lg hover:shadow-primary/25 active:scale-95"
+                    : "bg-muted/50 text-muted-foreground cursor-not-allowed"
+                )}
+              >
+                <Send className="h-4 w-4" />
+                {queuedCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white">
+                    {queuedCount}
+                  </span>
+                )}
+              </button>
             )}
-            {/* 发送按钮：始终显示，执行中点击会入队 */}
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!canSend}
-              className={cn(
-                "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200",
-                canSend
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-110 hover:shadow-lg hover:shadow-primary/25 active:scale-95"
-                  : "bg-muted/50 text-muted-foreground cursor-not-allowed"
-              )}
-            >
-              <Send className="h-4 w-4" />
-              {queuedCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-white">
-                  {queuedCount}
-                </span>
-              )}
-            </button>
             {/* 语音输入错误提示 */}
             {voiceError && (
               <div className="mt-2 px-1 text-xs text-destructive flex items-center gap-1">
