@@ -9,6 +9,7 @@ import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ContentHeader } from "@/components/layout/ContentHeader";
 import { useAgents } from "@/hooks/useAgents";
 import { useAgentMetadataStore } from "@/stores/agentMetadataStore";
+import { cn } from "@/lib/utils";
 
 export function MainContent() {
   const activeNav = useAppStore((s) => s.activeNav);
@@ -23,70 +24,79 @@ export function MainContent() {
     ? (getMeta(selectedAgent.id)?.displayName ?? selectedAgent.name)
     : "";
 
-  if (activeNav === "stats") {
-    return (
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <ContentHeader title="任务统计" />
-        <StatsPanel />
-      </div>
-    );
-  }
+  const inDetailView = agentDetailViewId != null && agentDetailViewId !== "main";
+  const detailAgent = agentDetailViewId
+    ? agents.find((a) => a.id === agentDetailViewId)
+    : null;
+  const detailTitle = detailAgent
+    ? (getMeta(detailAgent.id)?.displayName ?? detailAgent.name)
+    : "Agent";
+  const sessionTitle =
+    selectedAgentId === "main"
+      ? "主聊 (Master)"
+      : selectedAgent
+      ? agentDisplayName
+      : "Agents";
 
-  if (activeNav === "agents") {
-    const inDetailView = agentDetailViewId != null && agentDetailViewId !== "main";
-    const detailAgent = agentDetailViewId
-      ? agents.find((a) => a.id === agentDetailViewId)
-      : null;
-    const detailTitle = detailAgent
-      ? (getMeta(detailAgent.id)?.displayName ?? detailAgent.name)
-      : "Agent";
-
-    if (inDetailView) {
-      return (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <ContentHeader title={detailTitle} />
-          <AgentsPanel />
-        </div>
-      );
-    }
-    const sessionTitle =
-      selectedAgentId === "main"
-        ? "主聊 (Master)"
-        : selectedAgent
-        ? agentDisplayName
-        : "Agents";
-    return (
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+  return (
+    <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
+      {/* Agents Chat（始终挂载，用 CSS 控制显示/隐藏） */}
+      <div
+        className={cn("flex-1 flex flex-col min-w-0 min-h-0", {
+          hidden: activeNav !== "agents" || inDetailView,
+        })}
+      >
         <ContentHeader title={sessionTitle} actions={chatHeaderAction} />
         <ChatArea agentId={selectedAgentId ?? "main"} />
       </div>
-    );
-  }
 
-  if (activeNav === "cron") {
-    return (
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      {/* Agents Detail */}
+      <div
+        className={cn("flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", {
+          hidden: activeNav !== "agents" || !inDetailView,
+        })}
+      >
+        <ContentHeader title={detailTitle} />
+        <AgentsPanel />
+      </div>
+
+      {/* Stats */}
+      <div
+        className={cn("flex-1 flex flex-col min-w-0 min-h-0", {
+          hidden: activeNav !== "stats",
+        })}
+      >
+        <ContentHeader title="任务统计" />
+        <StatsPanel />
+      </div>
+
+      {/* Cron */}
+      <div
+        className={cn("flex-1 flex flex-col min-w-0 min-h-0", {
+          hidden: activeNav !== "cron",
+        })}
+      >
         <CronPanel />
       </div>
-    );
-  }
 
-  if (activeNav === "skills") {
-    return (
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      {/* Skills */}
+      <div
+        className={cn("flex-1 flex flex-col min-w-0 min-h-0", {
+          hidden: activeNav !== "skills",
+        })}
+      >
         <SkillsPanel />
       </div>
-    );
-  }
 
-  if (activeNav === "settings") {
-    return (
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      {/* Settings */}
+      <div
+        className={cn("flex-1 flex flex-col min-w-0 min-h-0", {
+          hidden: activeNav !== "settings",
+        })}
+      >
         <ContentHeader title="设置" />
         <SettingsPanel />
       </div>
-    );
-  }
-
-  return null;
+    </div>
+  );
 }
