@@ -58,8 +58,7 @@ export function MainContent() {
     return (
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <ContentHeader title={sessionTitle} actions={chatHeaderAction} />
-        {/* 只渲染当前选中的 Agent，避免隐藏组件监听状态变化导致的问题 */}
-        <ChatArea key={selectedAgentId ?? "main"} agentId={selectedAgentId ?? "main"} />
+        <ChatArea agentId={selectedAgentId ?? "main"} />
       </div>
     );
   }

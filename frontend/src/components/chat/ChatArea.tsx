@@ -207,6 +207,9 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     tokenEstimate: 0,
     isThinking: false,
   });
+  const currentAgentIdRef = useRef(agentId);
+  currentAgentIdRef.current = agentId;
+  const prevAgentIdRef = useRef(agentId);
 
   // 设置 Header 操作按钮
   useEffect(() => {
@@ -266,8 +269,37 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   // 加载会话消息
   // 使用 ref 避免在执行过程中因 activeBackendSessionId 变化而覆盖当前消息
   const isInitialLoadRef = useRef(true);
+
+  // Agent 切换时重置状态并触发重新加载
   useEffect(() => {
-    // 只在首次挂载或显式 reload 时加载
+    if (prevAgentIdRef.current === agentId) return;
+
+    // 停止当前正在执行的任务
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    inFlightRef.current = false;
+    setLoading(false);
+
+    // 重置状态
+    setMessages([]);
+    setPendingQueue([]);
+    setPendingRequest(null);
+    setIsTruncated(false);
+    setHasMoreMessages(false);
+    setCompacting(false);
+    setContextPercent(undefined);
+    messageOffsetRef.current = PAGE_SIZE;
+    backendOffsetRef.current = 0;
+
+    // 触发重新加载
+    isInitialLoadRef.current = true;
+    prevAgentIdRef.current = agentId;
+  }, [agentId, setPendingRequest]);
+
+  useEffect(() => {
+    // 只在首次挂载、显式 reload 或 agent 切换时加载
     // 执行过程中 complete 事件会修改 activeBackendSessionId，此时不应重新加载
     if (!isInitialLoadRef.current && !chatHistoryReloadNonce) {
       return;
@@ -615,6 +647,9 @@ export function ChatArea({ agentId }: ChatAreaProps) {
         signal: abortControllerRef.current.signal,
         onChunk: () => {},
         onEvent: (event) => {
+          // Agent 已切换，忽略旧 stream 的事件
+          if (currentAgentIdRef.current !== agentId) return;
+
           // 如果之前因超时提前结束，但后续事件仍到达（LLM 只是极慢），复活流式状态
           if (streamFinished) {
             streamFinished = false;
@@ -803,6 +838,9 @@ export function ChatArea({ agentId }: ChatAreaProps) {
           });
         },
         onDone: (error, aborted) => {
+          // Agent 已切换，忽略旧 stream 的完成事件
+          if (currentAgentIdRef.current !== agentId) return;
+
           streamFinished = true;
           inFlightRef.current = false;
           setLoading(false);
