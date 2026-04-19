@@ -5,11 +5,11 @@ import {
   PopoverContent,
   PopoverAnchor,
 } from "@/components/ui/popover";
-import { Send, Square, Mic, Trash2, Pencil } from "lucide-react";
+import { Send, Square, Mic, Trash2, Pencil, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
 import { useAppStore } from "@/stores/appStore";
-import { openSystemPreferences } from "@/api/tauri-api";
+import { openSystemPreferences, transcribeAudio, initAsr, getAsrStatus } from "@/api/tauri-api";
 
 interface InputAreaProps {
   agentId: string;
@@ -67,6 +67,51 @@ export function InputArea({
   // 语音录制状态
   const [isRecording, setIsRecording] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [asrStatusMessage, setAsrStatusMessage] = useState<string | null>(null);
+  const [volumeBars, setVolumeBars] = useState<number[]>([0.2, 0.3, 0.2, 0.3, 0.2]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const volumeAudioCtxRef = useRef<AudioContext | null>(null);
+  const volumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // ASR 模型静默预加载（进入页面就后台 init，避免首次录音卡顿）
+  useEffect(() => {
+    let cancelled = false;
+    getAsrStatus().then(status => {
+      if (cancelled) return;
+      if (!status.initialized && !status.initializing) {
+        console.log("[InputArea] 预加载 ASR 模型...");
+        initAsr().catch(err => {
+          console.warn("[InputArea] ASR 预加载失败（将在首次使用时重试）:", err);
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 组件卸载时停止录音并清理音频分析资源
+  useEffect(() => {
+    return () => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+      if (volumeIntervalRef.current) {
+        clearInterval(volumeIntervalRef.current);
+      }
+      if (volumeAudioCtxRef.current) {
+        volumeAudioCtxRef.current.close().catch(() => {});
+      }
+    };
+  }, []);
 
   const slashState = parseSlash(value, cursorPos);
 
@@ -226,89 +271,277 @@ export function InputArea({
     adjustHeight();
   }, [value, adjustHeight]);
 
-  // 语音输入：使用 Web Speech API
+  // 语音输入：使用本地 ASR（Rust 后端）
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  /**
+   * 将音频 Blob 解码为 16kHz 单声道 16-bit PCM
+   * 使用 Web Audio API 解码（支持 webm/opus/mp4 等浏览器格式）
+   */
+  async function decodeAudioToPcm16(blob: Blob): Promise<Int16Array> {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioCtx = new AudioContext({ sampleRate: 16000 });
+    try {
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      const numChannels = audioBuffer.numberOfChannels;
+      const srcRate = audioBuffer.sampleRate;
+      const srcLength = audioBuffer.length;
+
+      // 混音为单声道
+      const mono = new Float32Array(srcLength);
+      for (let i = 0; i < srcLength; i++) {
+        let sum = 0;
+        for (let ch = 0; ch < numChannels; ch++) {
+          sum += audioBuffer.getChannelData(ch)[i];
+        }
+        mono[i] = sum / numChannels;
+      }
+
+      // 如果源采样率不是 16kHz，线性插值重采样
+      let resampled: Float32Array;
+      if (srcRate !== 16000) {
+        const ratio = 16000 / srcRate;
+        const newLength = Math.floor(srcLength * ratio);
+        resampled = new Float32Array(newLength);
+        for (let i = 0; i < newLength; i++) {
+          const srcIdx = i / ratio;
+          const i0 = Math.floor(srcIdx);
+          const i1 = Math.min(i0 + 1, srcLength - 1);
+          const frac = srcIdx - i0;
+          resampled[i] = mono[i0] * (1 - frac) + mono[i1] * frac;
+        }
+      } else {
+        resampled = mono;
+      }
+
+      // 转换为 16-bit PCM
+      const pcm = new Int16Array(resampled.length);
+      for (let i = 0; i < resampled.length; i++) {
+        const clamped = Math.max(-1, Math.min(1, resampled[i]));
+        pcm[i] = Math.floor(clamped * 32767);
+      }
+      return pcm;
+    } finally {
+      await audioCtx.close();
+    }
+  }
+
   const handleVoiceInput = useCallback(async () => {
     console.log("[InputArea] handleVoiceInput called, isRecording=", isRecording);
 
-    // 检查浏览器支持
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    if (!SpeechRecognition) {
-      setVoiceError("浏览器不支持语音识别");
-      return;
-    }
-
-    // 如果正在录音，则停止
+    // 如果正在录音，则停止并处理
     if (isRecording) {
-      const existing = (window as any).__speechRecognition;
-      if (existing) {
-        existing.stop();
-        (window as any).__speechRecognition = null;
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        recorder.stop();
       }
-      setIsRecording(false);
+      // 计时器在 onstop 中清理
       return;
     }
 
-    // 开始语音识别
-    // 先检查麦克风权限
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // 有权限，停止预览流
-        stream.getTracks().forEach(track => track.stop());
-      } catch (permErr) {
-        console.error("[InputArea] Microphone permission denied:", permErr);
-        setVoiceError("麦克风权限被拒绝，请在系统偏好设置中允许访问");
-        return;
-      }
+    // 检查麦克风权限
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setVoiceError("浏览器不支持麦克风访问");
+      return;
     }
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'zh-CN';
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    recognition.onresult = (event: any) => {
-      let finalTranscript = '';
+      // 创建 MediaRecorder，使用 webm 编码（Safari 14.1+ 支持 webm）
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+          ? 'audio/mp4'
+          : 'audio/webm';
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
+      const recorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
         }
+      };
+
+      recorder.onstop = async () => {
+        console.log("[InputArea] Recording stopped, processing audio...");
+
+        // 停止计时器和音量分析
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+          recordingTimerRef.current = null;
+        }
+        if (volumeIntervalRef.current) {
+          clearInterval(volumeIntervalRef.current);
+          volumeIntervalRef.current = null;
+        }
+        if (volumeAudioCtxRef.current) {
+          volumeAudioCtxRef.current.close().catch(() => {});
+          volumeAudioCtxRef.current = null;
+        }
+        analyserRef.current = null;
+        setIsRecording(false);
+
+        // 停止所有 track
+        stream.getTracks().forEach(track => track.stop());
+
+        // 检查是否有音频数据
+        if (audioChunksRef.current.length === 0) {
+          console.log("[InputArea] No audio data recorded");
+          return;
+        }
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+
+        try {
+          if (!mountedRef.current) return;
+          setIsTranscribing(true);
+
+          // 解码并重采样为 16kHz PCM
+          const pcmData = await decodeAudioToPcm16(audioBlob);
+          if (!mountedRef.current) return;
+          console.log("[InputArea] PCM samples:", pcmData.length, "duration:", (pcmData.length / 16000).toFixed(1) + "s");
+
+          // 转换为 base64（小端序 16-bit PCM）
+          const bytes = new Uint8Array(pcmData.buffer);
+          const base64 = btoa(
+            Array.from(bytes)
+              .map(b => String.fromCharCode(b))
+              .join('')
+          );
+
+          // 检查 ASR 状态，必要时初始化
+          let asrStatus: { initialized: boolean; initializing: boolean; downloadProgress: number } | null = null;
+          try {
+            asrStatus = await getAsrStatus();
+          } catch {
+            // ignore
+          }
+
+          if (!asrStatus?.initialized && !asrStatus?.initializing) {
+            console.log("[InputArea] Initializing ASR...");
+            setAsrStatusMessage("正在初始化语音识别模型...");
+            try {
+              await initAsr();
+            } catch (err) {
+              console.error("[InputArea] initAsr failed:", err);
+              setVoiceError("语音识别模型初始化失败");
+              setAsrStatusMessage(null);
+              setIsTranscribing(false);
+              return;
+            }
+          }
+
+          if (asrStatus?.initializing) {
+            setAsrStatusMessage(`正在下载语音模型: ${Math.round(asrStatus.downloadProgress)}%`);
+          }
+
+          // 调用本地 ASR
+          console.log("[InputArea] Calling transcribeAudio...");
+          const result = await transcribeAudio(base64);
+          if (!mountedRef.current) return;
+          setVoiceError(null);
+          setAsrStatusMessage(null);
+
+          if (result?.text && result.text !== '[未能识别语音]') {
+            const currentValue = valueRef.current || "";
+            const newValue = currentValue + (currentValue ? " " : "") + result.text.trim();
+            setValue(newValue);
+            valueRef.current = newValue;
+            setAgentInputDraft(agentId, newValue);
+            textareaRef.current?.focus();
+          } else {
+            setVoiceError("未能识别语音，请重试");
+          }
+        } catch (err) {
+          if (!mountedRef.current) return;
+          console.error("[InputArea] Transcription failed:", err);
+          setVoiceError(`转写失败: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          if (mountedRef.current) {
+            setIsTranscribing(false);
+          }
+        }
+      };
+
+      recorder.onerror = (event: any) => {
+        console.error("[InputArea] MediaRecorder error:", event.error);
+        setVoiceError(`录音错误: ${event.error?.message || event.error}`);
+        setIsRecording(false);
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+          recordingTimerRef.current = null;
+        }
+        if (volumeIntervalRef.current) {
+          clearInterval(volumeIntervalRef.current);
+          volumeIntervalRef.current = null;
+        }
+        if (volumeAudioCtxRef.current) {
+          volumeAudioCtxRef.current.close().catch(() => {});
+          volumeAudioCtxRef.current = null;
+        }
+        analyserRef.current = null;
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      // 开始录音
+      recorder.start(1000);  // 每秒收集一次数据
+      setIsRecording(true);
+      setRecordingDuration(0);
+      setVoiceError(null);
+      console.log("[InputArea] Recording started, mimeType=", mimeType);
+
+      // 启动计时器
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => {
+          const next = prev + 1;
+          // 最大录音时长 60 秒
+          if (next >= 60) {
+            const recorder = mediaRecorderRef.current;
+            if (recorder && recorder.state !== 'inactive') {
+              recorder.stop();
+            }
+          }
+          return next;
+        });
+      }, 1000);
+
+      // 启动音量分析（用于波形动画）
+      try {
+        const audioCtx = new AudioContext();
+        volumeAudioCtxRef.current = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        analyser.smoothingTimeConstant = 0.8;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        volumeIntervalRef.current = setInterval(() => {
+          if (!analyserRef.current) return;
+          analyserRef.current.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+          const normalized = average / 255;
+          // 生成 5 根跳动的音量柱
+          setVolumeBars(Array.from({ length: 5 }, (_, i) => {
+            const noise = Math.sin(Date.now() / 100 + i) * 0.15;
+            const height = Math.max(0.15, Math.min(1, normalized * 0.9 + noise + 0.1));
+            return height;
+          }));
+        }, 100);
+      } catch (e) {
+        console.warn("[InputArea] 音量分析启动失败:", e);
       }
 
-      if (finalTranscript) {
-        const currentValue = valueRef.current || "";
-        const newValue = currentValue + (currentValue ? " " : "") + finalTranscript.trim();
-        setValue(newValue);
-        valueRef.current = newValue;
-        setAgentInputDraft(agentId, newValue);
-        textareaRef.current?.focus();
-      }
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error("[InputArea] Speech recognition error:", event.error);
-      if (event.error === 'not-allowed') {
-        setVoiceError("麦克风权限被拒绝，请在系统偏好设置中允许访问");
-      } else if (event.error === 'no-speech') {
-        // 无语音输入不算错误
-      } else {
-        setVoiceError(`语音识别错误: ${event.error}`);
-      }
-      setIsRecording(false);
-    };
-
-    // 保存实例以便停止
-    (window as any).__speechRecognition = recognition;
-    recognition.start();
-    setIsRecording(true);
-    setVoiceError(null);
-  }, [agentId, setAgentInputDraft]);
+    } catch (permErr) {
+      console.error("[InputArea] Microphone permission denied:", permErr);
+      setVoiceError("麦克风权限被拒绝，请在系统偏好设置中允许访问");
+    }
+  }, [agentId, setAgentInputDraft, isRecording]);
 
   // Auto-scroll picker to keep the active item in view
   useEffect(() => {
@@ -327,7 +560,7 @@ export function InputArea({
     <div className="px-4 py-4">
       {/* 队列面板 */}
       {queuePanelOpen && queueItems.length > 0 && (
-        <div className="mb-2 max-h-48 overflow-y-auto rounded-xl border border-border/60 bg-card/50 p-2.5 space-y-1.5">
+        <div className="mb-2 max-h-48 overflow-y-auto rounded-2xl border border-border/70 bg-muted/30 dark:bg-muted/50 p-2.5 space-y-1.5 animate-fade-in-up">
           <div className="flex items-center justify-between px-1">
             <span className="text-xs font-medium text-muted-foreground">
               待发送队列 ({queueItems.length})
@@ -335,7 +568,7 @@ export function InputArea({
             <button
               type="button"
               onClick={() => setQueuePanelOpen(false)}
-              className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              className="rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-all duration-200"
             >
               收起
             </button>
@@ -343,13 +576,13 @@ export function InputArea({
           {queueItems.map((item, i) => (
             <div
               key={i}
-              className="group flex items-center gap-2 rounded-lg bg-muted/30 p-1.5 hover:bg-muted/50 transition-colors"
+              className="group flex items-center gap-2 rounded-xl bg-muted/30 dark:bg-muted/40 p-2 hover:bg-muted/50 dark:hover:bg-muted/60 transition-all duration-200"
             >
               <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{i + 1}.</span>
-              <span className="min-h-[1.5rem] flex-1 break-words rounded px-1 py-0.5 text-xs text-foreground">
+              <span className="min-h-[1.5rem] flex-1 break-words rounded-lg px-2 py-1 text-xs text-foreground">
                 {item}
               </span>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200">
                 <button
                   type="button"
                   onClick={() => {
@@ -361,7 +594,7 @@ export function InputArea({
                     requestAnimationFrame(() => textareaRef.current?.focus());
                   }}
                   title="移到输入框编辑"
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                  className="shrink-0 rounded-lg p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-200"
                 >
                   <Pencil className="h-3 w-3" />
                 </button>
@@ -369,7 +602,7 @@ export function InputArea({
                   type="button"
                   onClick={() => onDeleteQueueItem?.(i)}
                   title="删除"
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  className="shrink-0 rounded-lg p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-200"
                 >
                   <Trash2 className="h-3 w-3" />
                 </button>
@@ -378,7 +611,19 @@ export function InputArea({
           ))}
         </div>
       )}
-      {/* 语音输入错误提示 */}
+      {/* 语音输入状态提示 */}
+      {asrStatusMessage && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg bg-muted/50 border border-border/50 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
+          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground flex-1">{asrStatusMessage}</span>
+        </div>
+      )}
+      {isTranscribing && !voiceError && !asrStatusMessage && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
+          <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
+          <span className="text-primary flex-1">正在识别语音...</span>
+        </div>
+      )}
       {voiceError && (
         <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
           <span className="text-destructive flex-1">{voiceError}</span>
@@ -431,14 +676,29 @@ export function InputArea({
               }}
               onKeyDown={handleKeyDown}
             />
+            {/* 录音音量波形 */}
+            {isRecording && (
+              <div className="flex items-end gap-[3px] h-5 pb-1.5 shrink-0">
+                {volumeBars.map((h, i) => (
+                  <div
+                    key={i}
+                    className="w-[3px] rounded-full bg-destructive/80 transition-all duration-75"
+                    style={{ height: `${Math.max(4, h * 18)}px` }}
+                  />
+                ))}
+              </div>
+            )}
             {/* 语音输入按钮 */}
             {isRecording ? (
               <button
                 type="button"
                 onClick={handleVoiceInput}
                 title="停止录音"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground hover:bg-destructive transition-all duration-200 hover:scale-110 active:scale-95 relative"
               >
+                <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] font-medium text-destructive tabular-nums whitespace-nowrap">
+                  {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
+                </span>
                 <Square className="h-4 w-4" />
               </button>
             ) : (
@@ -446,9 +706,18 @@ export function InputArea({
                 type="button"
                 onClick={handleVoiceInput}
                 title="语音输入"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/50 text-muted-foreground hover:bg-primary/20 hover:text-primary transition-colors"
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-200",
+                  isTranscribing
+                    ? "bg-primary/20 text-primary hover:bg-primary/30"
+                    : "bg-muted/50 text-muted-foreground hover:bg-primary/20 hover:text-primary hover:scale-110 hover:shadow-lg hover:shadow-primary/10 active:scale-95"
+                )}
               >
-                <Mic className="h-4 w-4" />
+                {isTranscribing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
               </button>
             )}
             {/* 单个按钮：根据输入状态自动切换发送/停止 */}
