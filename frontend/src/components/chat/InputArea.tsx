@@ -215,7 +215,7 @@ export function InputArea({
   }, [value, adjustHeight]);
 
   // 语音输入：使用 Web Speech API
-  const handleVoiceInput = useCallback(() => {
+  const handleVoiceInput = useCallback(async () => {
     console.log("[InputArea] handleVoiceInput called, isRecording=", isRecording);
 
     // 检查浏览器支持
@@ -237,6 +237,19 @@ export function InputArea({
     }
 
     // 开始语音识别
+    // 先检查麦克风权限
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // 有权限，停止预览流
+        stream.getTracks().forEach(track => track.stop());
+      } catch (permErr) {
+        console.error("[InputArea] Microphone permission denied:", permErr);
+        setVoiceError("麦克风权限被拒绝，请在系统偏好设置中允许访问");
+        return;
+      }
+    }
+
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -268,7 +281,11 @@ export function InputArea({
 
     recognition.onerror = (event: any) => {
       console.error("[InputArea] Speech recognition error:", event.error);
-      if (event.error !== 'no-speech') {
+      if (event.error === 'not-allowed') {
+        setVoiceError("麦克风权限被拒绝，请在系统偏好设置中允许访问");
+      } else if (event.error === 'no-speech') {
+        // 无语音输入不算错误
+      } else {
         setVoiceError(`语音识别错误: ${event.error}`);
       }
       setIsRecording(false);
