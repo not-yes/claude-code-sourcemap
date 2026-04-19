@@ -279,6 +279,11 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    // 清除待执行的保存，防止保存到错误的 agent key
+    if (saveDebounceRef.current) {
+      clearTimeout(saveDebounceRef.current);
+      saveDebounceRef.current = null;
+    }
     inFlightRef.current = false;
     setLoading(false);
 
@@ -286,6 +291,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     setMessages([]);
     setPendingQueue([]);
     setPendingRequest(null);
+    setActiveBackendSessionId(null);
     setIsTruncated(false);
     setHasMoreMessages(false);
     setCompacting(false);

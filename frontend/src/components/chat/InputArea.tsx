@@ -9,6 +9,7 @@ import { Send, Square, Mic, Trash2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
 import { useAppStore } from "@/stores/appStore";
+import { openSystemPreferences } from "@/api/tauri-api";
 
 interface InputAreaProps {
   agentId: string;
@@ -51,6 +52,17 @@ export function InputArea({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastEnterTimeRef = useRef<number>(0);
   const valueRef = useRef<string>(agentInputDrafts[agentId] ?? "");
+
+  // Agent 切换时同步输入框 draft
+  useEffect(() => {
+    const draft = agentInputDrafts[agentId] ?? "";
+    if (valueRef.current !== draft) {
+      setValue(draft);
+      valueRef.current = draft;
+    }
+    setQueuePanelOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
   const lastSlashQueryRef = useRef<string | null>(null);
   // 语音录制状态
   const [isRecording, setIsRecording] = useState(false);
@@ -366,6 +378,29 @@ export function InputArea({
           ))}
         </div>
       )}
+      {/* 语音输入错误提示 */}
+      {voiceError && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
+          <span className="text-destructive flex-1">{voiceError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              openSystemPreferences("microphone");
+              setVoiceError(null);
+            }}
+            className="text-primary hover:text-primary/80 underline transition-colors"
+          >
+            打开设置
+          </button>
+          <button
+            type="button"
+            onClick={() => setVoiceError(null)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
         <PopoverAnchor asChild>
           <div
@@ -456,19 +491,6 @@ export function InputArea({
                 </button>
               )}
             </div>
-            {/* 语音输入状态提示 */}
-            {voiceError && (
-              <div className="mt-2 flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
-                <span className="text-destructive flex-1">{voiceError}</span>
-                <button
-                  type="button"
-                  onClick={() => setVoiceError(null)}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
           </div>
         </PopoverAnchor>
         <PopoverContent
