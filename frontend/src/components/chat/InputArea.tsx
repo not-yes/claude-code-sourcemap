@@ -314,35 +314,37 @@ export function InputArea({
           {queueItems.map((item, i) => (
             <div
               key={i}
-              className="flex items-center gap-1.5 rounded-lg bg-muted/30 p-1.5 hover:bg-muted/50 transition-colors"
+              className="group flex items-center gap-2 rounded-lg bg-muted/30 p-1.5 hover:bg-muted/50 transition-colors"
             >
               <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{i + 1}.</span>
               <span className="min-h-[1.5rem] flex-1 break-words rounded px-1 py-0.5 text-xs text-foreground">
                 {item}
               </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setValue(item);
-                  valueRef.current = item;
-                  setAgentInputDraft(agentId, item);
-                  onDeleteQueueItem?.(i);
-                  setQueuePanelOpen(false);
-                  requestAnimationFrame(() => textareaRef.current?.focus());
-                }}
-                title="移到输入框编辑"
-                className="shrink-0 rounded p-1 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-              >
-                <Pencil className="h-3 w-3" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onDeleteQueueItem?.(i)}
-                title="删除"
-                className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setValue(item);
+                    valueRef.current = item;
+                    setAgentInputDraft(agentId, item);
+                    onDeleteQueueItem?.(i);
+                    setQueuePanelOpen(false);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                  title="移到输入框编辑"
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteQueueItem?.(i)}
+                  title="删除"
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
