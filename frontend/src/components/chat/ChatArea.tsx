@@ -594,6 +594,8 @@ export function ChatArea({ agentId }: ChatAreaProps) {
       if (fallbackSessionId) {
         effectiveSessionId = fallbackSessionId;
         setActiveBackendSessionId(fallbackSessionId);
+        // 同步更新 ref，确保 onEvent/onDone 中的 saveMessages 使用正确的 key
+        activeBackendSessionIdRef.current = fallbackSessionId;
       }
     }
 
@@ -781,14 +783,16 @@ export function ChatArea({ agentId }: ChatAreaProps) {
                     if (cwdForSave) {
                       savePersistedBackendSession(agentId, completeEvent.sessionId, cwdForSave);
                     }
-                    if (!activeBackendSessionId) {
-                      // 【关键修复】首次获得 sessionId 时，将之前以 agentId 为 key 保存的本地消息
-                      // 迁移到 sessionId key 下，避免刷新后 key 不匹配导致消息"消失"
+                    // 迁移逻辑：只在真正没有 sessionId 时执行（防御性加载后 ref 已更新，跳过）
+                    if (!activeBackendSessionId && !activeBackendSessionIdRef.current) {
                       const oldMessages = loadMessages(agentId, currentCwd);
                       if (oldMessages.length > 0) {
                         saveMessages(completeEvent.sessionId, oldMessages, currentCwd);
                         clearMessages(agentId, currentCwd);
                       }
+                      setActiveBackendSessionId(completeEvent.sessionId);
+                    } else if (!activeBackendSessionId && activeBackendSessionIdRef.current) {
+                      // 防御性加载已设置 ref，只需同步 state
                       setActiveBackendSessionId(completeEvent.sessionId);
                     }
                   }
