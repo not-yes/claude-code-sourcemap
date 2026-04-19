@@ -146,7 +146,20 @@ async function main(): Promise<void> {
     process.exit(proc.exitCode ?? 1)
   }
 
-  // 8. 输出统计信息
+  // 8. 同时创建不带 target triple 的副本（Tauri externalBin 基础名称）
+  const plainName = `claude-sidecar${ext}`
+  const plainPath = path.join(binDir, plainName)
+  if (existsSync(outfile)) {
+    try {
+      const data = await Bun.file(outfile).arrayBuffer()
+      await Bun.write(plainPath, data)
+      console.info(`[信息] 已创建副本: ${plainPath}`)
+    } catch (err) {
+      console.warn(`[警告] 创建副本失败: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  // 9. 输出统计信息
   let sizeStr = '未知'
   if (existsSync(outfile)) {
     const stat = statSync(outfile)
@@ -158,6 +171,7 @@ async function main(): Promise<void> {
   console.info('║                编译完成 ✓                         ║')
   console.info('╚═══════════════════════════════════════════════════╝')
   console.info(`  输出路径   : ${outfile}`)
+  console.info(`  副本路径   : ${plainPath}`)
   console.info(`  文件大小   : ${sizeStr}`)
   console.info(`  编译耗时   : ${elapsed}s`)
   console.info('')

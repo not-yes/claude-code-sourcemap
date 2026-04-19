@@ -5,6 +5,7 @@ import { AppWindow } from "@/components/layout/window";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { KeyboardShortcuts } from "@/components/command/KeyboardShortcuts";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { checkIsTauri } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { ping } from "@/api/tauri-api";
@@ -200,12 +201,14 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <AppWindow>
-        <AppLayout />
-        <CommandPalette />
-        <KeyboardShortcuts />
-        <Toaster />
-      </AppWindow>
+      <TooltipProvider delayDuration={300}>
+        <AppWindow>
+          <AppLayout />
+          <CommandPalette />
+          <KeyboardShortcuts />
+          <Toaster />
+        </AppWindow>
+      </TooltipProvider>
     </ErrorBoundary>
   );
 }

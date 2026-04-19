@@ -60,7 +60,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             frontend/src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ matrix.rust-target }}-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.rust-target }}-${{ hashFiles('frontend/src-tauri/Cargo.lock', 'frontend/src-tauri/binaries/*') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.rust-target }}-
 
@@ -91,11 +91,18 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: frontend/src-tauri
         run: |
-          if (Test-Path "binaries/claude-sidecar-x86_64-pc-windows-msvc.exe") {
-            Write-Host "✓ Sidecar binary found"
-            Get-Item "binaries/claude-sidecar-x86_64-pc-windows-msvc.exe" | Select-Object Name, Length
-          } else {
-            Write-Host "✗ Sidecar binary NOT found!"
+          $files = @("binaries/claude-sidecar-x86_64-pc-windows-msvc.exe", "binaries/claude-sidecar.exe")
+          $allFound = $true
+          foreach ($file in $files) {
+            if (Test-Path $file) {
+              Write-Host "✓ $file found"
+              Get-Item $file | Select-Object Name, Length
+            } else {
+              Write-Host "✗ $file NOT found!"
+              $allFound = $false
+            }
+          }
+          if (-not $allFound) {
             Write-Host "Contents of binaries directory:"
             Get-ChildItem binaries -ErrorAction SilentlyContinue
             exit 1

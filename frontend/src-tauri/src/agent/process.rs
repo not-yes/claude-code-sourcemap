@@ -55,6 +55,59 @@ pub fn read_settings_env() -> Option<(Option<String>, Option<String>, std::colle
     Some((api_key, base_url, models))
 }
 
+/// 从 agent md 文件的 frontmatter 中提取 name
+/// agent md 文件格式: ---
+/// name: AgentName
+/// description: xxx
+/// ---
+fn extract_agent_name_from_md(content: &str) -> Option<String> {
+    // 简单的 frontmatter 解析
+    let start = content.find("---")?;
+    let end = content[ start + 3.. ].find("---")? + start + 3;
+    let frontmatter = &content[start..end];
+
+    for line in frontmatter.lines() {
+        if line.trim().starts_with("name:") {
+            return Some(line.trim()[5..].trim().to_string());
+        }
+    }
+    None
+}
+
+/// 从 ~/.claude-desktop/agents/ 目录读取所有 agent 的名称
+/// 直接读取 md 文件确保 dev 和安装版名称一致
+/// 文件格式: ~/.claude-desktop/agents/{name}.md
+pub fn get_agent_names_from_files() -> Vec<(String, String)> {
+    let agents_dir = expand_home("~/.claude-desktop/agents");
+    let mut agents = Vec::new();
+
+    if !std::path::Path::new(&agents_dir).exists() {
+        log::info!("get_agent_names_from_files: agents 目录不存在: {}", agents_dir);
+        return agents;
+    }
+
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // 直接读取 .md 文件
+            if path.extension().map(|e| e == "md").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Some(name) = extract_agent_name_from_md(&content) {
+                        // agent_id 是文件名（不含 .md 后缀）
+                        let id = path.file_stem()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        log::info!("get_agent_names_from_files: 发现 agent id={}, name={}", id, name);
+                        agents.push((id.clone(), name.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    agents
+}
+
 /// 解析 sidecar 二进制路径
 ///
 /// 优先级：
@@ -99,8 +152,8 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
             }
         }
 
-        // 2a. exe 同目录,无后缀名称(生产打包常见)
-        let sidecar_plain = exe_dir.join("claude-sidecar");
+        // 2a. exe 同目录,无后缀名称(生产打包常见, Windows 为 .exe)
+        let sidecar_plain = exe_dir.join(if cfg!(windows) { "claude-sidecar.exe" } else { "claude-sidecar" });
         log::info!("resolve_sidecar_path: [2a] 检查 {:?} => 存在: {}", sidecar_plain, sidecar_plain.exists());
         if sidecar_plain.exists() {
             return Ok(sidecar_plain);
@@ -154,13 +207,26 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
 
     // 3. 检查 Resources/binaries/ 目录（某些打包配置）
     if let Ok(resource_dir) = app.path().resource_dir() {
+        // 3a. 不带 target triple 的名称（Tauri 打包后常见）
+        let sidecar_name_plain = format!(
+            "binaries/claude-sidecar{}",
+            if cfg!(windows) { ".exe" } else { "" }
+        );
+        let sidecar_path_plain = resource_dir.join(&sidecar_name_plain);
+        log::info!("resolve_sidecar_path: [3a] 检查资源目录 {:?} => 存在: {}", sidecar_path_plain, sidecar_path_plain.exists());
+        if sidecar_path_plain.exists() {
+            return Ok(sidecar_path_plain);
+        }
+        tried_paths.push(sidecar_path_plain);
+
+        // 3b. 带 target triple 的名称
         let sidecar_name = format!(
             "binaries/claude-sidecar-{}{}",
             get_target_triple(),
             if cfg!(windows) { ".exe" } else { "" }
         );
         let sidecar_path = resource_dir.join(&sidecar_name);
-        log::info!("resolve_sidecar_path: [3] 检查资源目录 {:?} => 存在: {}", sidecar_path, sidecar_path.exists());
+        log::info!("resolve_sidecar_path: [3b] 检查资源目录 {:?} => 存在: {}", sidecar_path, sidecar_path.exists());
         if sidecar_path.exists() {
             return Ok(sidecar_path);
         }
@@ -181,10 +247,10 @@ pub fn resolve_sidecar_path(app: &AppHandle) -> Result<PathBuf, anyhow::Error> {
     }
     tried_paths.push(dev_manifest_platform);
 
-    // 5. 开发模式编译时路径：CARGO_MANIFEST_DIR/binaries/（无后缀通用名称）
+    // 5. 开发模式编译时路径：CARGO_MANIFEST_DIR/binaries/（无后缀通用名称, Windows 为 .exe）
     let dev_manifest_plain = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
-        .join("claude-sidecar");
+        .join(if cfg!(windows) { "claude-sidecar.exe" } else { "claude-sidecar" });
     log::info!("resolve_sidecar_path: [5] 检查 CARGO_MANIFEST_DIR 通用路径 {:?} => 存在: {}", dev_manifest_plain, dev_manifest_plain.exists());
     if dev_manifest_plain.exists() {
         return Ok(dev_manifest_plain);
