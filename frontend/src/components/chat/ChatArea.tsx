@@ -587,6 +587,16 @@ export function ChatArea({ agentId }: ChatAreaProps) {
   }, [pendingRequest, setPendingRequest, addRememberedDecision, agentId]);
 
   const handleSend = useCallback(async (content: string) => {
+    // 防御性加载：如果 sessionId 尚未就绪，尝试从 localStorage 补救
+    let effectiveSessionId = activeBackendSessionId;
+    if (!effectiveSessionId) {
+      const fallbackSessionId = loadPersistedBackendSession(agentId, currentCwd);
+      if (fallbackSessionId) {
+        effectiveSessionId = fallbackSessionId;
+        setActiveBackendSessionId(fallbackSessionId);
+      }
+    }
+
     if (inFlightRef.current) {
       setPendingQueue(prev => [...prev, content]);
       toast.info(`已加入队列（${pendingQueue.length + 1} 条待发送）`);
@@ -643,7 +653,7 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     }
 
     const sessionOpts = {
-      ...(activeBackendSessionId ? { backendSessionId: activeBackendSessionId } : {}),
+      ...(effectiveSessionId ? { backendSessionId: effectiveSessionId } : {}),
       agentId: agentId,
       cwd: latestCwd,
     };
