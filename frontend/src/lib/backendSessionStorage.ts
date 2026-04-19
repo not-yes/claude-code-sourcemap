@@ -30,9 +30,15 @@ function makeKey(agentKey: string, cwd?: string): string {
  */
 export function loadPersistedBackendSession(agentKey: string, cwd?: string): string | null {
   try {
-    const v = localStorage.getItem(makeKey(agentKey, cwd));
-    if (v == null || v === "") return null;
-    return v;
+    // 先尝试按 cwd 加载
+    if (cwd) {
+      const v = localStorage.getItem(makeKey(agentKey, cwd));
+      if (v != null && v !== "") return v;
+    }
+    // fallback：尝试不带 cwd 的 key（兼容 cwd 切换后的场景）
+    const v = localStorage.getItem(makeKey(agentKey));
+    if (v != null && v !== "") return v;
+    return null;
   } catch {
     return null;
   }
@@ -50,11 +56,22 @@ export function savePersistedBackendSession(
   cwd?: string
 ): void {
   try {
-    const key = makeKey(agentKey, cwd);
+    // 保存/清除带 cwd 的 key（向后兼容）
+    if (cwd) {
+      const keyWithCwd = makeKey(agentKey, cwd);
+      if (backendSessionId == null || backendSessionId === "") {
+        localStorage.removeItem(keyWithCwd);
+      } else {
+        localStorage.setItem(keyWithCwd, backendSessionId);
+      }
+    }
+    // 同时保存/清除不带 cwd 的 fallback key
+    // 这样无论 cwd 如何变化，都能加载到 session ID
+    const keyWithoutCwd = makeKey(agentKey);
     if (backendSessionId == null || backendSessionId === "") {
-      localStorage.removeItem(key);
+      localStorage.removeItem(keyWithoutCwd);
     } else {
-      localStorage.setItem(key, backendSessionId);
+      localStorage.setItem(keyWithoutCwd, backendSessionId);
     }
   } catch {
     // localStorage 不可用或配额溢出时静默忽略

@@ -165,11 +165,13 @@ export function ChatArea({ agentId }: ChatAreaProps) {
     prevCwdRef.current = currentCwd;
 
     const newSessionId = loadPersistedBackendSession(agentId, currentCwd);
-    setActiveBackendSessionId(newSessionId);
-
-    // 切换工作目录后必须触发消息重新加载，否则 isInitialLoadRef 为 false 会导致加载 effect 直接跳过
-    if (isCwdChanged) {
-      bumpChatHistoryReload();
+    if (newSessionId !== activeBackendSessionId) {
+      setActiveBackendSessionId(newSessionId);
+      // 非首次加载时 sessionId 变化，需要触发消息重新加载
+      //（首次加载由 isInitialLoadRef 驱动，不需要 bump）
+      if (!isInitialLoadRef.current) {
+        bumpChatHistoryReload();
+      }
     }
 
     // 标记当前 agent+cwd 为已读
