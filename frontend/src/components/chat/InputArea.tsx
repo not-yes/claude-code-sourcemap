@@ -9,7 +9,6 @@ import { Send, Square, Mic, Trash2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SLASH_COMMANDS } from "@/constants/slashCommands";
 import { useAppStore } from "@/stores/appStore";
-import { transcribeAudio, startAudioRecording, stopAudioRecording } from "@/api/tauri-api";
 
 interface InputAreaProps {
   agentId: string;
@@ -55,7 +54,6 @@ export function InputArea({
   const lastSlashQueryRef = useRef<string | null>(null);
   // 语音录制状态
   const [isRecording, setIsRecording] = useState(false);
-  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const slashState = parseSlash(value, cursorPos);
@@ -216,58 +214,72 @@ export function InputArea({
     adjustHeight();
   }, [value, adjustHeight]);
 
-  // 语音输入：开始/停止录制（使用 Rust 后端录音）
-  const handleVoiceInput = useCallback(async () => {
+  // 语音输入：使用 Web Speech API
+  const handleVoiceInput = useCallback(() => {
     console.log("[InputArea] handleVoiceInput called, isRecording=", isRecording);
 
-    // 如果正在录音，则停止并转写
-    if (isRecording) {
-      console.log("[InputArea] Stopping recording...");
-      try {
-        setIsProcessingVoice(true);
-        console.log("[InputArea] Calling stopAudioRecording()...");
-        const base64Audio = await stopAudioRecording();
-        console.log("[InputArea] stopAudioRecording returned, length=", base64Audio?.length);
-        setIsRecording(false);
-
-        // 直接传递纯 base64 数据（不需要 data URL 前缀）
-        console.log("[InputArea] Calling transcribeAudio()...");
-        const text = await transcribeAudio(base64Audio);
-        console.log("[InputArea] transcribeAudio returned:", text);
-
-        if (text && text.trim()) {
-          const currentValue = valueRef.current || "";
-          const newValue = currentValue + (currentValue ? " " : "") + text.trim();
-          console.log("[InputArea] Setting value:", newValue);
-          setValue(newValue);
-          valueRef.current = newValue;
-          setAgentInputDraft(agentId, newValue);
-          textareaRef.current?.focus();
-        } else {
-          console.warn("[InputArea] transcribeAudio returned empty text");
-          setVoiceError("未识别到语音内容，请重试");
-        }
-      } catch (err) {
-        console.error("[InputArea] 语音转写失败:", err);
-        setVoiceError(`语音转写失败: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        setIsProcessingVoice(false);
-      }
+    // 检查浏览器支持
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SpeechRecognition) {
+      setVoiceError("浏览器不支持语音识别");
       return;
     }
 
-    // 开始录音
-    console.log("[InputArea] Starting recording...");
-    try {
-      await startAudioRecording();
-      console.log("[InputArea] startAudioRecording succeeded");
-      setIsRecording(true);
-      setVoiceError(null);
-    } catch (err) {
-      console.error("[InputArea] 开始录音失败:", err);
-      setVoiceError(`开始录音失败: ${err instanceof Error ? err.message : String(err)}`);
+    // 如果正在录音，则停止
+    if (isRecording) {
+      const existing = (window as any).__speechRecognition;
+      if (existing) {
+        existing.stop();
+        (window as any).__speechRecognition = null;
+      }
+      setIsRecording(false);
+      return;
     }
-  }, [isRecording, agentId, setAgentInputDraft]);
+
+    // 开始语音识别
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'zh-CN';
+
+    recognition.onresult = (event: any) => {
+      let finalTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        }
+      }
+
+      if (finalTranscript) {
+        const currentValue = valueRef.current || "";
+        const newValue = currentValue + (currentValue ? " " : "") + finalTranscript.trim();
+        setValue(newValue);
+        valueRef.current = newValue;
+        setAgentInputDraft(agentId, newValue);
+        textareaRef.current?.focus();
+      }
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("[InputArea] Speech recognition error:", event.error);
+      if (event.error !== 'no-speech') {
+        setVoiceError(`语音识别错误: ${event.error}`);
+      }
+      setIsRecording(false);
+    };
+
+    // 保存实例以便停止
+    (window as any).__speechRecognition = recognition;
+    recognition.start();
+    setIsRecording(true);
+    setVoiceError(null);
+  }, [agentId, setAgentInputDraft]);
 
   // Auto-scroll picker to keep the active item in view
   useEffect(() => {
@@ -286,7 +298,7 @@ export function InputArea({
     <div className="px-4 py-4">
       {/* 队列面板 */}
       {queuePanelOpen && queueItems.length > 0 && (
-        <div className="mb-2 space-y-1.5 rounded-xl border border-border/60 bg-card/50 p-2.5">
+        <div className="mb-2 max-h-48 overflow-y-auto rounded-xl border border-border/60 bg-card/50 p-2.5 space-y-1.5">
           <div className="flex items-center justify-between px-1">
             <span className="text-xs font-medium text-muted-foreground">
               待发送队列 ({queueItems.length})
@@ -294,15 +306,18 @@ export function InputArea({
             <button
               type="button"
               onClick={() => setQueuePanelOpen(false)}
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             >
               收起
             </button>
           </div>
           {queueItems.map((item, i) => (
-            <div key={i} className="flex items-start gap-1.5 rounded-lg bg-muted/30 p-1.5">
-              <span className="mt-1 text-[10px] tabular-nums text-muted-foreground">{i + 1}.</span>
-              <span className="min-h-[2rem] flex-1 rounded px-1 py-0.5 text-xs text-foreground">
+            <div
+              key={i}
+              className="flex items-center gap-1.5 rounded-lg bg-muted/30 p-1.5 hover:bg-muted/50 transition-colors"
+            >
+              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{i + 1}.</span>
+              <span className="min-h-[1.5rem] flex-1 break-words rounded px-1 py-0.5 text-xs text-foreground">
                 {item}
               </span>
               <button
@@ -316,7 +331,7 @@ export function InputArea({
                   requestAnimationFrame(() => textareaRef.current?.focus());
                 }}
                 title="移到输入框编辑"
-                className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary transition-colors"
+                className="shrink-0 rounded p-1 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
               >
                 <Pencil className="h-3 w-3" />
               </button>
@@ -324,7 +339,7 @@ export function InputArea({
                 type="button"
                 onClick={() => onDeleteQueueItem?.(i)}
                 title="删除"
-                className="mt-0.5 shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+                className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
               >
                 <Trash2 className="h-3 w-3" />
               </button>
@@ -363,19 +378,14 @@ export function InputArea({
               onKeyDown={handleKeyDown}
             />
             {/* 语音输入按钮 */}
-            {(isRecording || isProcessingVoice) ? (
+            {isRecording ? (
               <button
                 type="button"
-                disabled={isProcessingVoice}
                 onClick={handleVoiceInput}
-                title={isRecording ? "停止录音" : "处理中..."}
+                title="停止录音"
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors"
               >
-                {isProcessingVoice ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                ) : (
-                  <Square className="h-4 w-4" />
-                )}
+                <Square className="h-4 w-4" />
               </button>
             ) : (
               <button
@@ -438,12 +448,6 @@ export function InputArea({
                 >
                   ✕
                 </button>
-              </div>
-            )}
-            {isProcessingVoice && (
-              <div className="mt-2 flex items-center gap-2 rounded-lg bg-primary/10 border border-primary/20 px-3 py-2 text-xs animate-in fade-in slide-in-from-top-1">
-                <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
-                <span className="text-primary flex-1">正在转写...</span>
               </div>
             )}
           </div>
