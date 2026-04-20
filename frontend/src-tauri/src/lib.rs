@@ -2,7 +2,8 @@ mod agent;
 mod plugins;
 mod sync;
 mod secure_storage;
-mod audio_capture;
+mod asr;
+mod audio_recorder;
 
 use agent::AgentManager;
 use plugins::mac_rounded_corners;
@@ -245,25 +246,63 @@ async fn agent_permission_response(
         .map_err(classify_error)
 }
 
+/// 获取一般配置文件的路径 (~/.claude-desktop/config.json)
+fn get_general_config_path() -> std::path::PathBuf {
+    let home = dirs_next::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    home.join(".claude-desktop").join("config.json")
+}
+
+/// 确保一般配置文件目录存在
+fn ensure_general_config_dir() -> Result<(), String> {
+    let home = dirs_next::home_dir()
+        .ok_or_else(|| "无法获取 home 目录".to_string())?;
+    let dir = home.join(".claude-desktop");
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("创建配置目录失败: {}", e))?;
+    }
+    Ok(())
+}
+
+/// 读取一般配置文件 (JSON 对象)
+fn read_general_config() -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let path = get_general_config_path();
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("读取配置文件失败: {}", e))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("解析配置文件失败: {}", e))?;
+    match value {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Ok(serde_json::Map::new()),
+    }
+}
+
+/// 写入一般配置文件
+fn write_general_config(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    ensure_general_config_dir()?;
+    let path = get_general_config_path();
+    let content = serde_json::to_string_pretty(map)
+        .map_err(|e| format!("序列化配置失败: {}", e))?;
+    std::fs::write(&path, content)
+        .map_err(|e| format!("写入配置文件失败: {}", e))
+}
+
 /// 读取持久化配置项，返回原始 JSON 值（字符串、数组、对象等）
 #[tauri::command]
-async fn get_config(app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
-    let store = app
-        .store("config.json")
-        .map_err(|e| e.to_string())?;
-    let value = store.get(&key).map(|v| v.clone());
-    Ok(value)
+async fn get_config(_app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Value>, String> {
+    let config = read_general_config()?;
+    Ok(config.get(&key).cloned())
 }
 
 /// 写入持久化配置项，接受任意 JSON 值（字符串、数组、对象等）
 #[tauri::command]
-async fn set_config(app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
-    let store = app
-        .store("config.json")
-        .map_err(|e| e.to_string())?;
-    store.set(key, value);
-    store.save().map_err(|e| e.to_string())?;
-    Ok(())
+async fn set_config(_app: tauri::AppHandle, key: String, value: serde_json::Value) -> Result<(), String> {
+    let mut config = read_general_config()?;
+    config.insert(key, value);
+    write_general_config(&config)
 }
 
 /// 打开目录选择对话框，返回用户选择的路径
@@ -436,116 +475,42 @@ async fn agent_get_running(
     Ok(state.0.get_running_agents().await)
 }
 
-/// 语音转写：使用阿里云 DashScope qwen3-asr-flash 模型将音频转为文字
+/// 直接从 ~/.claude-desktop/agents/ 目录读取 agent 定义文件获取名称
+/// 绕过 sidecar，确保 dev 和安装版名称一致
 #[tauri::command]
-async fn transcribe_audio(
-    audio_data: String,
-) -> Result<String, String> {
-    log::info!("transcribe_audio: 开始转写, audio_data长度={}", audio_data.len());
+fn get_agents_from_files() -> Vec<serde_json::Value> {
+    let agents = agent::process::get_agent_names_from_files();
+    agents.into_iter().map(|(id, name)| {
+        serde_json::json!({
+            "id": id,
+            "name": name
+        })
+    }).collect()
+}
 
-    // 从安全存储获取语音识别专用 API Key
-    let api_key = secure_storage::get_asr_api_key()
-        .await
-        .map_err(|e| format!("获取语音 API Key 失败: {}", e))?
-        .ok_or_else(|| "语音识别 API Key 未设置，请在「设置 - 语音识别」中配置".to_string())?;
+/// 打开 macOS 系统设置页面
+#[tauri::command]
+async fn open_system_preferences(panel: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let url = match panel.as_str() {
+            "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            "camera" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
+            "screen" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            _ => return Err(format!("未知的系统设置面板: {}", panel)),
+        };
 
-    // audio_data 应为 Data URL 格式: data:<mediatype>;base64,<data>
-    // 前端已经格式化为 data:audio/webm;base64,... 格式
-
-    // 构建 Chat Completions 格式请求（OpenAI 兼容风格）
-    let request_body = serde_json::json!({
-        "model": "qwen3-asr-flash",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": audio_data
-                        }
-                    }
-                ]
-            }
-        ],
-        "stream": false,
-        "extra_body": {
-            "asr_options": {
-                "enable_itn": true  // 启用智能数字转换，123 -> 一百二十三
-            }
-        }
-    });
-
-    // 30 秒超时，防止永久卡死
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    let response = client
-        .post("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| {
-            log::error!("transcribe_audio: HTTP 请求失败 - {}", e);
-            format!("网络请求失败，请检查网络连接: {}", e)
-        })?;
-
-    let status = response.status();
-    let body = response.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
-
-    log::info!("transcribe_audio: 响应状态={}", status);
-
-    if !status.is_success() {
-        log::error!("transcribe_audio: API 返回错误状态 {} - {}", status, body);
-        // 尝试解析错误信息
-        #[derive(serde::Deserialize)]
-        struct ErrorResponse {
-            error: Option<ErrorDetail>,
-        }
-        #[derive(serde::Deserialize, Clone)]
-        struct ErrorDetail {
-            message: Option<String>,
-            code: Option<String>,
-        }
-        if let Ok(err_resp) = serde_json::from_str::<ErrorResponse>(&body) {
-            if let Some(err) = err_resp.error {
-                let msg = err.message.unwrap_or_default();
-                let code = err.code;
-                return Err(format!("转写失败: {} (code: {:?})", msg, code));
-            }
-        }
-        return Err(format!("转写失败 (HTTP {}): {}", status, body));
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| format!("打开系统设置失败: {}", e))?;
+        Ok(())
     }
 
-    // 解析 Chat Completions 响应格式
-    #[derive(serde::Deserialize)]
-    struct Choice {
-        message: Message,
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("仅支持 macOS 系统".to_string())
     }
-    #[derive(serde::Deserialize)]
-    struct Message {
-        content: Option<String>,
-    }
-    #[derive(serde::Deserialize)]
-    struct ChatCompletionResponse {
-        choices: Vec<Choice>,
-    }
-
-    let result: ChatCompletionResponse = serde_json::from_str(&body)
-        .map_err(|e| format!("解析响应失败: {} - body: {}", e, body))?;
-
-    let text = result.choices
-        .first()
-        .and_then(|c| c.message.content.clone())
-        .unwrap_or_default();
-
-    log::info!("transcribe_audio: 转写成功, 结果长度={}", text.len());
-
-    Ok(text)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -579,6 +544,8 @@ pub fn run() {
       agent_permission_response,
       agent_ensure,
       agent_get_running,
+      get_agents_from_files,
+      open_system_preferences,
       ensure_default_workspace,
       get_config,
       set_config,
@@ -619,25 +586,26 @@ pub fn run() {
       secure_storage::store_sync_username,
       secure_storage::get_sync_username,
       secure_storage::delete_sync_username,
-      // 语音识别 API Key
-      secure_storage::store_asr_api_key,
-      secure_storage::get_asr_api_key,
-      secure_storage::delete_asr_api_key,
       // 批量同步配置
       secure_storage::get_sync_config,
       secure_storage::store_sync_config,
-      // 语音转写
-      transcribe_audio,
-      // 音频录制
-      audio_capture::list_audio_devices,
-      audio_capture::start_audio_recording,
-      audio_capture::stop_audio_recording,
-      audio_capture::is_audio_recording,
       // 链接预览窗口
       open_preview_window,
+      // ASR 语音识别
+      asr::asr_init,
+      asr::asr_transcribe,
+      asr::asr_status,
+      // Rust 后端直接录音
+      audio_recorder::start_recording_cmd,
+      audio_recorder::stop_recording_and_transcribe,
+      audio_recorder::get_recording_volume_cmd,
     ])
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        // 只在主窗口关闭时才执行退出逻辑，预览窗口等子窗口直接关闭
+        if window.label() != "main" {
+          return;
+        }
         api.prevent_close(); // 阻止立即关闭，等待 sidecar 清理完成
         let state = window.state::<AgentManagerState>();
         let manager = state.0.clone();
